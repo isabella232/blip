@@ -46,7 +46,7 @@
   )
 
 (defun get-env-npages ()
-  (float (/ (length (get-env-var 'files)) (get-env-var 'pagesz))))
+  (ceiling (float (/ (length (get-env-var 'files)) (get-env-var 'pagesz)))))
 
 (defun test-fdepth ()
   (map 'list #'(lambda (p) (intersperse p "/" t)) (set-env-file-depth 2)))
@@ -161,6 +161,12 @@
 
 (new-js-env napi "github/joyent/sdc-napi" :head)
 
+(new-js-env node-ufds "github/joyent/node-ufds" :head)
+
+(new-js-env node-ufds-ctl "github/joyent/node-ufds-controls" :head)
+
+(new-js-env sdc-ufds "github/joyent/sdc-ufds" :head)
+
 (new-c-env mike-sdb "github/sdimitro/minions" :head "sdb/libsdb")
 
 (new-c-env libuv "github/libuv/libuv" :head "src/")
@@ -224,6 +230,13 @@
   (in-index-env force (if (and page) page 0)
     (map 'list #'(lambda (ix) (print-js-paths ix pov)) indices)))
 
+(defun index-build (&key force)
+  (iter:iter
+    (iter:for i from 0 to (- (get-env-npages) 1))
+     (index-print :down :force force :page i)
+    )
+  t)
+
 (defmacro! ast-ls (name lister)
   `(defun ,name (&optional count &key pref force)
     (in-ls-env
@@ -236,6 +249,7 @@
                                            (funcall ,lister repo f cmt count
                                                     :force force)
                                            nil))) files))
+
         (if (and pref)
             (setf filt-list
                   (map 'list
@@ -342,6 +356,8 @@
          (orig-files (ast-ls-files))
          (res nil))
          (setf rpref (car spref))
+     ;;; XXX Given that f4 is a superset of f1,2,3 we might want to get rid of
+     ;;; those.
      (setf f1 (ast-extract-files (ast-ls-fcalls t :pref rpref)))
      (setf f2 (ast-extract-files (ast-ls-fdefs t :pref rpref)))
      (setf f3 (ast-extract-files (ast-ls-fbinds t :pref rpref)))
@@ -432,6 +448,9 @@
 (pushenv bk)
 (default-bk-files)
 (pushenv pg)
+(pushenv node-ufds-ctl)
+(pushenv node-ufds)
+(pushenv sdc-ufds)
 ;(pushenv tmux)
 ;(set-env-file "format.c")
 ;postmaster.c: demerit!
@@ -450,4 +469,21 @@
                (ast-ls-words t :pref "#ifdef"))
           :key #'cadr)
         #'< :key #'cadadr)
+  )
+
+(defun ifndef-metrics ()
+  (sort
+   (remove-if #'not
+              (map 'list
+                   #'(lambda (p)
+                       (list (car p) (find-if
+                                      #'(lambda (pp)
+                                          (string= "#ifndef" (car pp))
+                                          )
+                                      (cadr p)
+                                      )
+                             ))
+                   (ast-ls-words t :pref "#ifndef"))
+              :key #'cadr)
+   #'< :key #'cadadr)
   )

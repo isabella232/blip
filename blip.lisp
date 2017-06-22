@@ -9,9 +9,11 @@
 (ql:quickload "let-over-lambda")
 (ql:quickload "cl-quickcheck")
 (ql:quickload "drakma")
-(ql:quickload :cl-ppcre)
+(ql:quickload "cl-ppcre")
+(ql:quickload "trivial-ssh")
 (ql:quickload "inferior-shell") ; Convenient for synchronous command execution
 (ql:quickload "cl-async") ; Libuv wrapper, convenient for background commands
+(ql:quickload "blackbird") ;promises over cl-async
 (ql:quickload "series")
 (ql:quickload "iterate")
 (ql:quickload "uuid")
@@ -28,7 +30,6 @@
 (defmacro! flatten (&body body)
   "Shorthand for lol:flatten"
   `(lol:flatten ,@body))
-
 
 (defun timed-funcall (func arg)
   "Calls function taking 1 arg and returns the return value of func and the
@@ -205,7 +206,10 @@
                      "drmeister" "llvm-mirror"
                      "joshwilsdon" "trentm"
                      "caolan" "mackyle" "tmux"
-                     "libuv" "eslint" "postgres"))
+                     "libuv" "eslint" "postgres"
+                     "aganeau" "erlang" "lmj"
+                     "gwydirsam" "jsonn" "orthecreedence"
+                     "keithj" "adolenc"))
 
 (setf github-repo-blacklist '("natural-earth-vector"))
 
@@ -216,6 +220,13 @@
 
 (defmacro! enclose (&rest x)
   `(list ,@x))
+
+(defun rdep (system)
+  "Return list of Quicklisp packages that use SYSTEM"
+  (let (rdeps)
+    (dolist (s (ql-dist:provided-systems (ql-dist:find-dist "quicklisp")) rdeps)
+      (if (member system (ql-dist:required-systems s) :test #'equal)
+          (push (ql-dist:name s) rdeps)))))
 
 (defun github-user-repos-url (user)
   "Creates github URL that we can use to access a user's repos"
@@ -2104,10 +2115,16 @@
 
 (defun file-to-form (input)
   (let* ((in (open input :if-does-not-exist nil))
-         (form nil))
-    (if (and in)
-        (progn (setf form (read in)) (close in)))
-    form))
+         (form nil)
+         (empty nil))
+    (cond
+      ((and in)
+       (setf form (read in))
+       (close in)
+       (if (not form)
+        (setf empty t)))
+      )
+    (values form empty)))
 
 (defun form-to-file (form output)
   (let ((out (open output :direction :output :if-exists :supersede
@@ -2417,9 +2434,12 @@
 (defmacro! x-list-node (name cacher loader)
   `(defun ,name (repo file commit &optional count &key force)
      (expand-commit! repo commit)
-     (let ((ls (if (not force) (,loader repo file commit) nil)))
+     (multiple-value-bind
+           (ls empty) (if (not force) (,loader repo file commit)
+                          (values nil nil))
+
        (cond
-         ((not ls)
+         ((and (not ls) (not empty))
           (,cacher repo file commit)
           (setf ls (,loader repo file commit)))
          )
@@ -3083,6 +3103,30 @@
 ;;; XXX Want to supply a list of 1 or more cond-pairs (a cond-test ast and a
 ;;; body ast) and a final, optional else-body.
 (defun gen-js-if (conds &optional else)
+  (let ((if-asts '())
+        (res '()))
+    (map 'nil #'(lambda (c)
+                  (pushr! if-asts
+                          (enclose (gen-word "if")
+                                   (enclose (gen-chars "(")
+                                            (car cond)
+                                            (gen-chars ")"))
+                                   (enclose (gen-char "{")
+                                            (cadr cond)
+                                            (gen-char "}")))
+                  ))
+         conds
+         )
+    (map 'nil #'(lambda (a)
+                  (pushr! res a)
+                  (pushr! res (gen-word "else"))
+                  )
+         if-asts)
+    (if (and else)
+        (pushr! res (enclose (gen-char "{") else (gen-char "}")))
+        (popr! res))
+    res
+    )
   )
 
 (defun gen-js-ctl-struct (ctl-word test body)
@@ -3098,7 +3142,12 @@
   (gen-js-ctl-struct "for" test body))
 
 (defun gen-js-do-while ()
-  )
+  (enclose (gen-word "do") (gen-blank)
+           (enclose (gen-chars "{") body (gen-chars "}"))
+           (gen-blank) (gen-word "while") (gen-blank)
+           (enclose (gen-chars "(") test (gen-chars ")"))
+           (gen-chars ";")
+           ))
 
 (defun gen-js-fcall (name args)
   (enclose (gen-word name) (gen-blank) (gen-js-fcargs args) (gen-chars ";")))
