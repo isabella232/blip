@@ -14,10 +14,26 @@
 (ql:quickload "inferior-shell") ; Convenient for synchronous command execution
 (ql:quickload "cl-async") ; Libuv wrapper, convenient for background commands
 (ql:quickload "blackbird") ;promises over cl-async
+(ql:quickload "cl-ncurses")
 (ql:quickload "series")
 (ql:quickload "iterate")
 (ql:quickload "uuid")
+(ql:quickload "ironclad")
+;Works, but not too good at validation
+;(ql:quickload "unix-options")
 (load "diff-sexp.lisp")
+
+(defun sha256-file (path)
+  (let ((digester (ironclad:make-digest :sha256)))
+    (ironclad:digest-file digester path)
+    ))
+
+(defun quiet-load (path)
+  ;;; TODO see if we can do this via a nil make-broadcast-stream...
+  (with-open-file
+      (*error-output* "/dev/null" :direction :output :if-exists :supersede)
+    (load path))
+  )
 
 (defmacro defmacro! (&body body)
   "Shorthand for lol:defmacro"
@@ -25,7 +41,6 @@
 
 (defmacro! uuid ()
   (uuid:make-v4-uuid))
-
 
 (defmacro! flatten (&body body)
   "Shorthand for lol:flatten"
@@ -54,23 +69,23 @@
     (iter:after-each (iter:collect (list f time) into timing))
     (iter:finally (return (values ret timing)))))
 
-(defun pipeline-cond-aux (arg fns)
+(defun pipeline-until-aux (arg fns)
   (if (and fns)
       (let ((ret nil))
         (setf ret (funcall (car fns) arg))
         (if (not ret)
-            (progn (pipeline-cond-aux arg (cdr fns)))
+            (progn (pipeline-until-aux arg (cdr fns)))
             (progn ret)
         ))
       (progn nil)))
 
-(defun pipeline-cond (arg &rest fns)
+(defun pipeline-until (arg &rest fns)
   "Like pipeline, except that it stops calling functions after a function
    returns a non-nil value."
-  (pipeline-cond-aux arg fns))
+  (pipeline-until-aux arg fns))
 
-(defun test-pipeline-cond ()
-  (pipeline-cond 42
+(defun test-pipeline-until ()
+  (pipeline-until 42
                  #'(lambda (n) (= n 10))
                  #'(lambda (n) (= n 20))
                  #'(lambda (n) (= n 30))
@@ -81,15 +96,11 @@
 (defun test-pl ()
   (pipeline 1 #'mysleep #'mysleep #'mysleep))
 
-(setf all-sessions nil)
+(defun string-to-symbol (s)
+  (intern (string-upcase s)))
 
-(setf session-index '((enabled ()) (disabled ())))
-
-(setf test-session '(some-session
-                       (objects ((nick "some-path" :rw)))
-                       (log ())
-                       (procedures ())
-                       ))
+(defun symbol-to-string (s)
+  (string-downcase (symbol-name s)))
 
 (defun str-cat-2 (s1 s2)
   "Concatenates 2 strings"
@@ -157,7 +168,7 @@
       ))
 
 
-(setf dirhist '())
+(defvar dirhist '())
 
 (defun pushdir (d)
   "Changes the current working directory and update the stack"
@@ -174,49 +185,49 @@
   )
 
 
-(setf blip-root "/depot/synthesis/blip/")
-(setf blip-stor (str-cat blip-root "stor/"))
-(setf blip-tickets (str-cat blip-stor "tickets/"))
-(setf blip-meta (str-cat blip-root "meta/"))
-(setf blip-tmp (str-cat blip-meta "tmp/"))
-(setf blip-bin (str-cat blip-meta "bin/"))
-(setf blip-core (str-cat blip-bin "blip.core"))
-(setf blip-logs (str-cat blip-meta "logs/"))
-(setf blip-repos (str-cat blip-stor "repos/"))
-(setf blip-asts (str-cat blip-stor "repo-asts/"))
-(setf blip-repo-meta (str-cat blip-stor "repo-meta/"))
-(setf blip-joyent-asts (str-cat blip-asts "joyent/"))
-(setf blip-joyent-meta (str-cat blip-repo-meta "joyent/"))
-(setf blip-joyent-repos (str-cat blip-repos "joyent/"))
-(setf blip-repos-index (str-cat blip-stor "repos-index/"))
-(setf blip-joyent-repo-list (str-cat blip-repos-index "joyent"))
-(setf blip-self-repo (str-cat blip-repos "blip/"))
-(setf blip-code (str-cat blip-self-repo "blip.lisp"))
-(setf blip-latest-ix-ver 0)
-(setf github-base-url "https://github.com/")
-(setf npm-base-url "https://registry.npmjs.com/")
-(setf gerrit-base-url "https://cr.joyent.us/p/")
-(setf github-api-url "https://api.github.com/")
-(setf github-users '("joyent" "bitkeeper-scm" "sbcl"
-                     "hashicorp" "misterbisson"
-                     "davepacheco" "bcantrill"
-                     "golang" "moby" "cockroachdb"
-                     "jmercouris" "sdimitro"
-                     "aquynh" "letolabs" "nodejs"
-                     "drmeister" "llvm-mirror"
-                     "joshwilsdon" "trentm"
-                     "caolan" "mackyle" "tmux"
-                     "libuv" "eslint" "postgres"
-                     "aganeau" "erlang" "lmj"
-                     "gwydirsam" "jsonn" "orthecreedence"
-                     "keithj" "adolenc"))
+(defvar blip-root "/depot/synthesis/blip/")
+(defvar blip-stor (str-cat blip-root "stor/"))
+(defvar blip-tickets (str-cat blip-stor "tickets/"))
+(defvar blip-meta (str-cat blip-root "meta/"))
+(defvar blip-tmp (str-cat blip-meta "tmp/"))
+(defvar blip-du (str-cat blip-meta "disk-usage/"))
+(defvar blip-bin (str-cat blip-meta "bin/"))
+(defvar blip-env (str-cat blip-meta "env/"))
+(defvar blip-env-stack (str-cat blip-env "stack"))
+(defvar blip-env-avail (str-cat blip-env "avail"))
+(defvar blip-env-sha (str-cat blip-env "sha"))
+(defvar blip-core (str-cat blip-bin "blip"))
+(defvar blip-logs (str-cat blip-meta "logs/"))
+(defvar blip-repos (str-cat blip-stor "repos/"))
+(defvar blip-asts (str-cat blip-stor "repo-asts/"))
+(defvar blip-repo-meta (str-cat blip-stor "repo-meta/"))
+(defvar blip-joyent-asts (str-cat blip-asts "joyent/"))
+(defvar blip-joyent-meta (str-cat blip-repo-meta "joyent/"))
+(defvar blip-joyent-repos (str-cat blip-repos "joyent/"))
+(defvar blip-repos-index (str-cat blip-stor "repos-index/"))
+(defvar blip-joyent-repo-list (str-cat blip-repos-index "joyent"))
+(defvar blip-self-repo (str-cat blip-repos "blip/"))
+(defvar blip-code (str-cat blip-self-repo "blip.lisp"))
+(defvar blip-env-cfg (str-cat blip-env "env-cfg.lisp"))
+(defvar blip-latest-ix-ver 0)
+(defvar github-base-url "https://github.com/")
+(defvar npm-base-url "https://registry.npmjs.com/")
+(defvar gerrit-base-url "https://cr.joyent.us/p/")
+(defvar github-api-url "https://api.github.com/")
+(defvar blip-github-users (str-cat blip-repos-index "github-users"))
 
-(setf github-repo-blacklist '("natural-earth-vector"))
+(defun blip-env-cfg-currentp ()
+  (let* ((shanew (sha256-file blip-env-cfg))
+         (shaold (file-to-form blip-env-sha))
+         (current (equalp shaold shanew))
+         )
+    (if (not current)
+        (form-to-file shanew blip-env-sha)
+        )
+    current
+    ))
 
-(setf argv (cdr sb-ext:*posix-argv*))
-
-(setf is-admin nil)
-(setf is-job nil)
+(defvar github-repo-blacklist '("natural-earth-vector"))
 
 (defmacro! enclose (&rest x)
   `(list ,@x))
@@ -248,14 +259,296 @@
   "Reloads this file"
   (load blip-code))
 
+(defmacro! is-cmd-verb (s)
+  `(string= verb ,s))
+
+(defun str-to-pov (s)
+  (cond
+    ((string= s "up") :up)
+    ((string= s "down") :down)
+    ((and t) nil)))
+
+(defmacro! twice (&body body)
+  `(progn ,@body ,@body))
+
+(defmacro! thrice (&body body)
+  `(progn ,@body ,@body ,@body))
+
+(defmacro! in-index-path-cli (&body body)
+  `(let* ((noun nouns)
+          (path nil)
+          (pov nil)
+          (force nil)
+          (page nil))
+     (setf path (car noun))
+     (setf noun (cdr noun))
+     (setf pov (str-to-pov (car noun)))
+     (if pov (setf noun (cdr noun)))
+     (twice
+       (cond
+         ((string= (car noun) "--page")
+          (setf page (cadr noun))
+          (setf noun (cddr noun))
+          )
+         ((string= (car noun) "--force")
+          (setf force t)
+          (setf noun (cdr noun))
+          )
+         ))
+     ,@body
+     ))
+
+(defmacro! in-index-nopath-cli (&body body)
+  `(let* ((noun nouns)
+          (pov nil)
+          (force nil)
+          (page nil))
+     (setf pov (str-to-pov (car noun)))
+     (if pov (setf noun (cdr noun)))
+     (twice
+       (cond
+         ((string= (car noun) "--page")
+          (setf page (cadr noun))
+          (setf noun (cddr noun))
+          )
+         ((string= (car noun) "--force")
+          (setf force t)
+          (setf noun (cdr noun))
+          )
+         ))
+     ,@body
+     ))
+
+(defun load-top-env ()
+  (pushenv (load-env (car (last (file-to-form blip-env-stack)))))
+  )
+
+(defmacro! in-ast-ls-cli (&body body)
+  `(let* ((noun nouns)
+          (pref nil)
+          (force nil)
+          (count nil))
+     (thrice
+       (cond
+         ((string= (car noun) "--count")
+          (setf count t)
+          (setf noun (cdr noun))
+          )
+         ((string= (car noun) "--pref")
+          (setf pref (cadr noun))
+          (setf noun (cddr noun))
+          )
+         ((string= (car noun) "--force")
+          (setf force t)
+          (setf noun (cdr noun))
+          )
+         ))
+     ,@body
+     ))
+
+(defun file-size (path)
+  (if (not path) (return-from file-size nil))
+  ;;; TODO need to use conditions to handle stat-failures.
+  (let ((stat-obj (sb-posix:stat path)))
+    (if (and stat-obj)
+        (sb-posix:stat-size stat-obj)
+        nil)
+    )
+  )
+
+(defun compute-disk-usage ()
+  "We compute disk usage, by walking our directories. We don't use `du`, because
+   it it will error out if a file gets deleted while it tries to stat it. So, we
+   instead walk the directory and attempt to get the stat-size, dropping any
+   errors if they arise. We do this because other blips may be running and
+   modifying the filesystem and we don't want to get in their way. If this is
+   too slow, we can always run blip in a snapshot of the store (or something)."
+  ;(let* (())
+    ;)
+  )
+
+(defun print-ln (form)
+  (print form)
+  (format t "~%"))
+
 (defun main ()
   "The main entry point for this program."
-  (if (> (length argv) 0)
-      (setf is-admin t)
-      (setf is-job t))
-  (print (cwd))
-  (print sb-ext:*posix-argv*)
-  )
+  (let* ((argv sb-ext:*posix-argv*)
+         (verb (cadr argv))
+         (nouns (cddr argv)))
+    (cond
+      ((is-cmd-verb "help")
+       )
+      ((is-cmd-verb "compute-disk-usage")
+       (let ((date (get-universal-time)))
+         ; Exec du on dirs of interest, crunch/agg output into a table
+         ; Save tuple with date and table.
+         )
+       )
+      ((is-cmd-verb "show-disk-usage")
+       )
+      ((is-cmd-verb "env-ls")
+       (cond
+         ((not (blip-env-cfg-currentp))
+          (quiet-load blip-env-cfg)
+          )
+         )
+       (format t "~A~%" (file-to-form blip-env-avail))
+       )
+      ((is-cmd-verb "env-stack")
+       (format t "~A~%" (file-to-form blip-env-stack))
+       )
+      ((is-cmd-verb "top-env")
+       (load-top-env)
+       (format t "~A~%" (get-env-var 'name))
+       )
+      ((is-cmd-verb "pushenv")
+       (let* ((env-name (string-to-symbol (car nouns)))
+              (env nil)
+              )
+         (if (have-env env-name)
+             (form-to-file (pushr (file-to-form blip-env-stack) env-name)
+                           blip-env-stack))
+         ))
+      ((is-cmd-verb "popenv")
+       (form-to-file (popr (file-to-form blip-env-stack))
+                     blip-env-stack)
+       )
+      ((is-cmd-verb "index-prefix")
+       (load-top-env)
+       (in-index-path-cli (print-ln (index-prefix path pov :page page :force force)))
+       )
+      ((is-cmd-verb "index-suffix")
+       (load-top-env)
+       (in-index-path-cli (print-ln (index-suffix path pov :page page :force force)))
+       )
+      ((is-cmd-verb "index-word-count")
+       (load-top-env)
+       (in-index-path-cli (print-ln (index-word-count path pov :page page :force force)))
+       )
+      ((is-cmd-verb "index-uniq")
+       (load-top-env)
+       (in-index-nopath-cli (print-ln (index-uniq pov :page page :force force)))
+       )
+      ((is-cmd-verb "index-path-depth")
+       (load-top-env)
+       (in-index-nopath-cli (print-ln (index-path-depth pov :page page :force force)))
+       )
+      ((is-cmd-verb "index-print")
+       (load-top-env)
+       (in-index-nopath-cli (print-ln (index-print pov :page page :force force)))
+       )
+      ((is-cmd-verb "index-build")
+       (load-top-env)
+       (index-build :force (and (car nouns) (string= "--force" (car nouns))))
+       )
+      ((is-cmd-verb "index-get-subtree")
+       (load-top-env)
+       (in-index-path-cli (print-ln (index-get-subtree path pov :page page :force force)))
+       )
+      ((is-cmd-verb "index-get-subtree-str")
+       (load-top-env)
+       (in-index-path-cli (print-ln (index-get-subtree-str path pov :page page :force force)))
+       )
+      ((is-cmd-verb "ast-ls-files")
+       (load-top-env)
+       (let ((files (ast-ls-files)))
+         (print-ln (if (car nouns) (length files) files))
+         )
+       )
+      ((is-cmd-verb "ast-ls-fcalls")
+       (load-top-env)
+       (in-ast-ls-cli (print-ln (ast-ls-fcalls count :pref pref :force force)))
+       )
+      ((is-cmd-verb "ast-ls-fdefs")
+       (load-top-env)
+       (in-ast-ls-cli (print-ln (ast-ls-fdefs count :pref pref :force force)))
+       )
+      ((is-cmd-verb "ast-ls-words")
+       (load-top-env)
+       (in-ast-ls-cli (print-ln (ast-ls-words count :pref pref :force force)))
+       )
+      ((is-cmd-verb "ast-ls-fbinds")
+       (load-top-env)
+       (in-ast-ls-cli (print-ln (ast-ls-fbinds count :pref pref :force force)))
+       )
+      ((is-cmd-verb "ast-parse")
+       (load-top-env)
+       (ast-parse (and (car nouns)))
+       )
+      ((is-cmd-verb "reconstruct-repo")
+       (load-top-env)
+       (reconstruct-repo)
+       )
+      ((is-cmd-verb "outputs")
+       )
+      ((is-cmd-verb "jobs")
+       )
+      ((is-cmd-verb "xform")
+       )
+      ((is-cmd-verb "github-users")
+       (print-ln (file-to-form blip-github-users))
+       )
+      ((is-cmd-verb "github-user-add")
+       (let ((users (file-to-form blip-github-users)))
+         (cond
+           ((and (car nouns) (not (member (car nouns) users :test #'equal)))
+            (pushr! users (car nouns))
+            (form-to-file users blip-github-users)
+            )
+           )
+         )
+       )
+      ((is-cmd-verb "github-user-rem")
+       (let ((users (file-to-form blip-github-users)))
+         (cond
+           ((and (car nouns) (member (car nouns) users :test #'equal))
+            (setf users (remove-if  #'(lambda (u) (string= u (car nouns)))
+                                    users))
+            (form-to-file users blip-github-users)
+            )
+           )
+         )
+       )
+      ((is-cmd-verb "github-user-clone")
+       (cond
+         ((car nouns)
+          (cache-svc-user-repo-list "github" (car nouns))
+          (github-clone-user-all-bg (car nouns))
+          ))
+       )
+      ((is-cmd-verb "github-user-pull")
+       (cond
+         ((car nouns)
+          (cache-svc-user-repo-list "github" (car nouns))
+          (github-pull-user-all-bg (car nouns))
+          ))
+       )
+      ((is-cmd-verb "pull-env")
+       (load-top-env)
+       (pushdir (str-cat blip-repos (get-env-var 'repo)))
+       (inferior-shell:run/ss (list "git" "pull"))
+       (popdir)
+       )
+      ((is-cmd-verb "strap-repo")
+       (load-top-env)
+       (strap-git-repo (get-env-var 'repo))
+       )
+      ((is-cmd-verb "eval")
+       (if (cadr nouns)
+           (form-to-file (eval (read-from-string (car nouns)))
+                         (str-car blip-root (car nouns)))
+           (print (eval (read-from-string (car nouns))))
+           )
+       )
+      ((is-cmd-verb "sleep")
+       (sleep (parse-integer (car nouns)))
+       )
+      ((and t)
+       (format t "Bad verb!~%")
+       (sb-ext:exit :code -1))
+      )
+    ))
 
 (defun exec-self ()
   "This function executes this file as a child process"
@@ -270,10 +563,11 @@
         (-1 (error "fork failed"))
         (0 (sb-ext:save-lisp-and-die path :toplevel #'main :executable t))
         (otherwise (sb-posix:wait)))
-      (format t "stand-alone core ~a saved" path))
+      (format t "stand-alone core ~a saved~%" path))
     #-sbcl
-    (error "not available on this lisp")
+    (error "not available on this lisp~%")
         (values)))
+
 
 (defun install ()
   "This saves an executable core to the proper location"
@@ -504,44 +798,61 @@
    comment"
   (and (listp c) (or (is-white-space-group c) (is-comment c))))
 
+(defun is-cl-blank (c)
+  "Test if a node is a blank. This equates to being either white-space or a
+   comment"
+  (and (listp c) (or (is-white-space-group c) (is-cl-comment c))))
 
-(defun blanks-aux (stack head tail)
-  (tagbody
-   again
-     (cond
-       ((and (not head) (not tail))
-        )
-       ((and (listp head) (not (is-blank head)) tail)
-        (stack-pushr stack head)
-        (advance-scanner)
-        (go again))
-       ((and (listp head) (not (is-blank head)) (not tail))
-        (stack-pushr stack head)
-        (advance-scanner))
-       ((is-blank head)
-        (let ((ls '()))
-          (tagbody
-           blsagain
-             (cond
-               ((is-blank head)
-                (pushr! ls head)
-                (advance-scanner)
-                (go blsagain)))
-             (stack-pushr stack ls)))
-        (go again))
-       ((and t)
-        (stack-pushr stack head)
-        (advance-scanner)
-        (go again))
-       ))
-  (stack-list stack))
+(defmacro! def-blanks-aux (name test)
+  `(defun ,name (stack head tail)
+     (tagbody
+      again
+        (cond
+          ((and (not head) (not tail))
+           )
+          ((and (listp head) (not (,test head)) tail)
+           (stack-pushr stack head)
+           (advance-scanner)
+           (go again))
+          ((and (listp head) (not (,test head)) (not tail))
+           (stack-pushr stack head)
+           (advance-scanner))
+          ((,test head)
+           (let ((ls '()))
+             (tagbody
+              blsagain
+                (cond
+                  ((,test head)
+                   (pushr! ls head)
+                   (advance-scanner)
+                   (go blsagain)))
+                (stack-pushr stack ls)))
+           (go again))
+          ((and t)
+           (stack-pushr stack head)
+           (advance-scanner)
+           (go again))
+          ))
+     (stack-list stack)))
+
+(def-blanks-aux blanks-aux is-blank)
+(def-blanks-aux cl-blanks-aux is-cl-blank)
 
 (defun blanks (ls)
   "Returns the input list, with all blanks in sublists"
   (blanks-aux (make-instance 'stack) (car ls) (cdr ls)))
 
+(defun cl-blanks (ls)
+  "Same as above, but for common lisp blanks"
+  (cl-blanks-aux (make-instance 'stack) (car ls) (cdr ls)))
+
+
+
 (defun test-blanks ()
   (pipeline (str-to-char-ls "123  /* */ 123  123  123  ") #'cmt-str #'white-space #'blanks))
+
+(defun test-cl-blanks ()
+  (pipeline (str-to-char-ls "123  ;my comment ") #'cl-cmt-str #'white-space #'cl-blanks))
 
 
 ;;; Word grouping and related boolean tests (also used in punctuation)
@@ -813,9 +1124,52 @@
   (stack-list stack)
   )
 
+(defun cl-cmt-str-aux (stack head tail)
+  (tagbody
+   again
+     (cond
+       ((and (not head) (not tail))
+        )
+       ((and head (not tail))
+        (stack-pushr stack head))
+       ((CHAR= head #\;)
+        (let ((lcls '()))
+          (tagbody
+           lcmtagain
+             (cond
+               ((and (not (is-lcmt-end)) (not tail))
+                (pushr! lcls head)
+                (advance-scanner))
+               ((and (is-lcmt-end))
+                (pushr! lcls #\Newline)
+                (advance-scanner))
+               ((not (is-lcmt-end))
+                (pushr! lcls head)
+                (advance-scanner)
+                (go lcmtagain))
+               )
+             (stack-pushr stack lcls)
+             (go again)
+             )
+        ))
+       ((CHAR= head #\")
+        (str-tagbody #\" dqagain)
+        )
+       ((and t)
+        (stack-pushr stack head)
+        (advance-scanner)
+        (go again)
+        )
+       )
+     )
+  (stack-list stack)
+  )
+
 (defun cmt-str (char-ls)
   (cmt-str-aux (make-instance 'stack) (car char-ls) (cdr char-ls)))
 
+(defun cl-cmt-str (char-ls)
+  (cl-cmt-str-aux (make-instance 'stack) (car char-ls) (cdr char-ls)))
 
 ; When called this returns a list containing all chars from /* to */ and a new
 ; tail.
@@ -872,6 +1226,16 @@
               (and (CHAR= #\/ (car ls)) (CHAR= #\/ (cadr ls)))))
      t)
   ))
+
+(defun is-cl-comment (ls)
+  (cond
+    ((not (listp ls))
+     nil)
+    ((< (length ls) 2)
+     nil)
+    ((and (characterp (car ls)) (CHAR= #\; (car ls)))
+     t)
+    ))
 
 (defun is-str (ls)
   (cond
@@ -1027,6 +1391,13 @@
       (or (is-paren-group ls) (is-bracket-group ls))
       ))
 
+(defun is-js-fcall-end (ls)
+  (if (or (not ls) (is-punctuation-group ls) (is-nestable-end ls)
+          (or (is-paren-group ls) (is-bracket-group ls)))
+      0
+      nil
+      ))
+
 ;; Same conditions for jsarr as for fcall.
 (defun is-jsarr-end (ls)
   (is-fcall-end ls))
@@ -1050,6 +1421,23 @@
                (is-paren-group (caddr ls))))
          ((and t)
           nil))))
+
+(defun is-js-word-or-fcall-or-arr (ls)
+  (or (is-js-fcall ls) (is-js-arr ls) (is-word-group ls))
+  )
+
+(defun is-js-word-or-arr (ls)
+  (or (is-js-arr ls) (is-word-group ls))
+  )
+
+(defun is-dot (ls)
+  (and (is-punctuation-group ls) (= 1 (length ls)) (CHAR= #\. (car ls)))
+  )
+
+(defun is-word-arr-fcall-vbind-fbind (ls)
+  (or (is-js-fcall ls) (is-word-group ls) (is-js-arr ls)
+      (is-js-var-binding ls) (is-js-fdef-binding ls))
+  )
 
 (defun is-jsarr (ls)
   (and (listp ls)
@@ -1107,7 +1495,7 @@
      'operator)
     ((is-js-fdef ls)
      'function-definition)
-    ((is-fcall ls)
+    ((is-js-fcall ls)
      'function-call)
     ((is-jsarr ls)
      'js-array)
@@ -1137,7 +1525,7 @@
 
 
 (defun fcall-name-eq (fcall name)
-  (and (is-fcall fcall) (match-str-list name (get-fcall-name fcall))))
+  (and (is-js-fcall fcall) (match-str-list name (get-fcall-name fcall))))
 
 (defun is-c-fdef (ls)
   (and (listp ls)
@@ -1186,9 +1574,24 @@
 (defun is-js-fdef-binding (ls)
   (and ls (listp ls) (js-fdef-bindingp (car ls) (cdr ls))))
 
+(defun is-js-var-binding (ls)
+  (and ls (listp ls) (not (is-js-fdef-binding ls))
+       (or (is-word-group (car ls)) (is-js-arr (car ls)))
+       (or (is-eq-group (cadr ls)) (is-eq-group (caddr ls)))))
+
+(defun is-js-binding (ls)
+  (and ls (listp ls)
+       (or (is-js-fdef-binding ls)
+           (is-js-var-binding ls))))
+
 (defun is-js-fcall (ls)
   (and (listp ls)
-       (is-js-func-name (car ls)) (is-fcall ls)))
+       (not (is-js-fdef ls))
+       (js-fcallp (car ls) (cdr ls))))
+
+(defun is-js-arr (ls)
+  (and (listp ls)
+       (js-arrp (car ls) (cdr ls))))
 
 (defun is-c-fcall (ls)
   (and (listp ls)
@@ -1349,6 +1752,12 @@
       (list (car fc) (cadr fc)  (funcall cb (caddr fc)))
   ))
 
+(defun xform-js-arr-bgroup (fc cb)
+  (if (= (length fc) 2)
+      (list (car fc) (funcall cb (cadr fc)))
+      (list (car fc) (cadr fc)  (funcall cb (caddr fc)))
+      ))
+
 (defun xform-c-fdef-pgroup (fd cb)
   (cond
     ((= (length fd) 3)
@@ -1381,6 +1790,18 @@
       (pushr acc head) (car tail) (cdr tail) cb))
     ))
 
+(defun xform-js-vbind-rval-aux (acc head tail cb)
+  (cond
+    ((not head)
+     acc)
+    ((is-eq-group head)
+     (xform-js-vbind-rval-aux
+      (pushr acc head  (funcall cb tail)) (cadr tail) (cddr tail) cb))
+    ((not (is-eq-group head))
+     (xform-js-vbind-rval-aux
+      (pushr acc head) (car tail) (cdr tail) cb))
+    ))
+
 (defun xform-js-curly-ctl-stmt-cgroup-aux (acc head tail cb)
   (cond
     ((not head)
@@ -1410,15 +1831,18 @@
     ((not head)
      acc)
     ((is-paren-group head)
-     (xform-js-fdef-cgroup-aux
+     (xform-js-fdef-pgroup-aux
       (pushr acc (funcall cb head)) (car tail) (cdr tail) cb))
     ((not (is-curly-group head))
-     (xform-js-fdef-cgroup-aux
+     (xform-js-fdef-pgroup-aux
       (pushr acc head) (car tail) (cdr tail) cb))
     ))
 
 (defun xform-js-fdef-cgroup (fd cb)
   (xform-js-fdef-cgroup-aux '() (car fd) (cdr fd) cb))
+
+(defun xform-js-vbind-rval (fd cb)
+  (xform-js-vbind-rval-aux '() (car fd) (cdr fd) cb))
 
 (defun xform-js-fdef-pgroup (fd cb)
   (xform-js-fdef-pgroup-aux '() (car fd) (cdr fd) cb))
@@ -1492,6 +1916,34 @@
 (defun finite-match (ls match-fns)
   (finite-match-aux (car ls) (cdr ls) match-fns 0))
 
+(defun finite-repeating-match (ls rmatch-fns ematch-fns)
+  "Just like finite-match, except we match rmatch-fns in a loop, until it
+  returns nil. We then run ematch-fns on the part that rmatch failed to match.
+  If rmatch succeeds, this function returns t, otherwise nil"
+  (let ((curls ls)
+        (total_size 0)
+        (current_rsize 0)
+        (current_esize 0)
+        (rmatched 0))
+    (tagbody again
+       (setf current_rsize (finite-match curls rmatch-fns))
+       (cond
+         ((and current_rsize)
+          (incf total_size current_rsize)
+          (setf curls (nthcdr current_rsize curls))
+          (incf rmatched)
+          (go again))
+         ((not current_rsize)
+          (setf current_esize (finite-match curls ematch-fns))
+          (if (or (not current_esize) (= rmatched 0))
+              (setf total_size nil)
+              (incf total_size current_esize)
+              )))
+       )
+    total_size
+    )
+  )
+
 (defun js-else-if-stmtp (head tail)
       (finite-match (cons head tail)
                          (list
@@ -1561,6 +2013,26 @@
                 )
   )
 
+(defun js-fcallp (head tail)
+  (finite-match (cons head tail)
+                (list
+                 (list :m #'is-js-func-name)
+                 (list :o #'is-blank-group)
+                 (list :m #'is-paren-group)
+                 )
+                )
+  )
+
+(defun js-arrp (head tail)
+  (finite-match (cons head tail)
+                (list
+                 (list :m #'is-js-func-name)
+                 (list :o #'is-blank-group)
+                 (list :m #'is-bracket-group)
+                 )
+                )
+  )
+
 (defun group-js-fdef (head tail size)
   (list (map
          'list
@@ -1569,6 +2041,24 @@
         (car (popl-n tail (- size 1)))
         (popl-n tail size)
   ))
+
+(defun group-js-fcall (head tail size)
+  (list (map
+         'list
+         #'(lambda (x) (if (is-nestable x) (js-fcalls x) x))
+         (head-n (cons head tail) size))
+        (car (popl-n tail (- size 1)))
+        (popl-n tail size)
+        ))
+
+(defun group-js-arr (head tail size)
+  (list (map
+         'list
+         #'(lambda (x) (if (is-nestable x) (js-arrs x) x))
+         (head-n (cons head tail) size))
+        (car (popl-n tail (- size 1)))
+        (popl-n tail size)
+        ))
 
 (defun group-js-do-while-stmt (head tail size)
   (list (map
@@ -1618,24 +2108,7 @@
     (,parent nacc (car tail) (cdr tail))))
 
 
-(defun js-fdefs-aux (acc head tail)
-  (let ((sz (js-fdefp head tail)))
-    (cond
-      ((and sz)
-       (group-and-continue js-fdefs-aux group-js-fdef sz))
-      ((is-fcall head)
-       (xform-and-continue js-fdefs-aux xform-fcall-pgroup js-fdefs))
-      ((and (listp head) (is-nestable head))
-       (descend-and-continue js-fdefs js-fdefs-aux))
-      ((or (and (characterp head) tail) tail)
-       (js-fdefs-aux (pushr acc head) (car tail) (cdr tail)))
-      ((and head (not tail))
-       (pushr acc head))
-      ((and (not head))
-       acc)
-      )))
-
-(defmacro! pipeline-cond-lambda (test body)
+(defmacro! pipeline-until-lambda (test body)
   `(function (lambda (q)
     (if ,test
         ,body
@@ -1643,49 +2116,77 @@
   )
 
 (defmacro! js-uber-aux-impl (self-parent self matcher grouper &key fcall fdef fdef-bind
-                                    curly-ctl do-while flat-ctl arr nestable)
+                                         curly-ctl do-while flat-ctl arr nestable
+                                         var-bind)
   `(defun ,self (acc head tail)
      (let ((sz (,matcher head tail)))
-       (pipeline-cond nil
-                      (pipeline-cond-lambda (and sz)
+       (pipeline-until nil
+                      (pipeline-until-lambda (and sz)
                         (group-and-continue ,self ,grouper sz))
-                      (pipeline-cond-lambda (is-fcall head) ,fcall)
-                      (pipeline-cond-lambda (is-js-fdef head) ,fdef)
-                      (pipeline-cond-lambda (is-js-fdef-binding head) ,fdef-bind)
-                      (pipeline-cond-lambda (is-js-curly-ctl-stmt head) ,curly-ctl)
-                      (pipeline-cond-lambda (is-js-do-while-stmt head) ,do-while)
-                      (pipeline-cond-lambda (is-js-flat-ctl-stmt head) ,flat-ctl)
-                      (pipeline-cond-lambda (is-nestable head) ,nestable)
-                      (pipeline-cond-lambda (or (and (characterp head) tail) tail)
+                      (pipeline-until-lambda (is-js-fcall head) ,fcall)
+                      (pipeline-until-lambda (is-js-arr head) ,arr)
+                      (pipeline-until-lambda (is-js-fdef head) ,fdef)
+                      (pipeline-until-lambda (is-js-fdef-binding head) ,fdef-bind)
+                      (pipeline-until-lambda (is-js-var-binding head) ,var-bind)
+                      (pipeline-until-lambda (is-js-curly-ctl-stmt head) ,curly-ctl)
+                      (pipeline-until-lambda (is-js-do-while-stmt head) ,do-while)
+                      (pipeline-until-lambda (is-js-flat-ctl-stmt head) ,flat-ctl)
+                      (pipeline-until-lambda (is-nestable head) ,nestable)
+                      (pipeline-until-lambda (or (and (characterp head) tail) tail)
                                             (,self (pushr acc head) (car tail) (cdr tail)))
-                      (pipeline-cond-lambda (and head (not tail)) (pushr acc head))
-                      (pipeline-cond-lambda (and (not tail)) acc))
+                      (pipeline-until-lambda (and head (not tail)) (pushr acc head))
+                      (pipeline-until-lambda (and (not tail)) acc))
      )
   )
   )
 
 (js-uber-aux-impl js-fdefs js-fdefs-aux js-fdefp group-js-fdef
-                  :fcall (xform-and-continue js-fdefs-aux xform-fcall-pgroup js-fdefs)
+                  ;:fcall (xform-and-continue js-fdefs-aux xform-fcall-pgroup js-fdefs)
                   :nestable (descend-and-continue js-fdefs js-fdefs-aux))
 
-(js-uber-aux-impl js-fdef-bindings js-fdef-bindings-aux js-fdef-bindingp
-                  group-js-fdef-binding
-                  :fdef (xform-and-continue js-fdef-bindings-aux xform-js-fdef-cgroup
-                                            js-fdef-bindings)
-                  :nestable (descend-and-continue js-fdef-bindings
-                                                  js-fdef-bindings-aux))
+(js-uber-aux-impl js-fcalls js-fcalls-aux js-fcallp group-js-fcall
+                  :fdef (xform-and-continue js-fcalls-aux xform-js-fdef-cgroup js-fcalls)
+                  :nestable (descend-and-continue js-fcalls js-fcalls-aux))
+
+
+(js-uber-aux-impl js-arrs js-arrs-aux js-arrp group-js-arr
+                  :fdef (xform-and-continue js-arrs-aux xform-js-fdef-cgroup js-arrs)
+                  :fcall (xform-and-continue js-arrs-aux xform-fcall-pgroup js-arrs)
+                  :nestable (descend-and-continue js-arrs js-arrs-aux))
+
+
+(js-uber-aux-impl js-var-bindings js-var-bindings-aux js-var-bindingp
+                  group-js-var-binding
+                  :fdef (xform-and-continue js-var-bindings-aux xform-js-fdef-cgroup
+                                            js-var-bindings)
+                  :nestable (descend-and-continue js-var-bindings
+                                                  js-var-bindings-aux))
+
+(js-uber-aux-impl js-mbr-chain js-mbr-chain-aux js-mbr-chainp group-js-mbr-chain
+                  :fcall (xform-and-continue js-mbr-chain-aux xform-fcall-pgroup
+                                             js-mbr-chain)
+                  :arr (xform-and-continue js-mbr-chain-aux xform-js-arr-bgroup js-mbr-chain)
+                  :fdef (xform-and-continue js-mbr-chain-aux xform-js-fdef-cgroup
+                                            js-mbr-chain)
+                  ;XXX descend or xform???
+                  ;:var-bind (xform-and-continue js-mbr-chain-aux xform-js-vbind-rval js-mbr-chain)
+                  :var-bind (descend-and-continue js-mbr-chain js-mbr-chain-aux)
+                  :fdef-bind (descend-and-continue js-mbr-chain
+                                                  js-mbr-chain-aux)
+                  :nestable (descend-and-continue js-mbr-chain
+                                                  js-mbr-chain-aux))
 
 (js-uber-aux-impl js-curly-ctl-stmts js-curly-ctl-stmts-aux js-curly-ctl-stmtp
-                  group-js-curly-ctl-stmt :fdef
-                  (xform-and-continue js-curly-ctl-stmts-aux xform-js-fdef-cgroup
+                  group-js-curly-ctl-stmt
+                  :fdef (xform-and-continue js-curly-ctl-stmts-aux xform-js-fdef-cgroup
                                       js-curly-ctl-stmts)
                   :fcall (xform-and-continue js-curly-ctl-stmts-aux
                           xform-fcall-pgroup js-curly-ctl-stmts)
                   :nestable (js-curly-ctl-stmts-aux (pushr acc head) (car tail) (cdr tail)))
 
 (js-uber-aux-impl js-do-while-stmts js-do-while-stmts-aux js-do-while-stmtp
-                  group-js-do-while-stmt :fdef
-                  (xform-and-continue js-do-while-stmts-aux xform-js-fdef-cgroup
+                  group-js-do-while-stmt
+                  :fdef (xform-and-continue js-do-while-stmts-aux xform-js-fdef-cgroup
                                       js-do-while-stmts)
                   :fcall (xform-and-continue js-do-while-stmts-aux
                           xform-fcall-pgroup js-do-while-stmts)
@@ -1709,6 +2210,12 @@
 (defun js-fdefs (ls)
   (js-fdefs-aux '() (car ls) (cdr ls)))
 
+(defun js-fcalls (ls)
+  (js-fcalls-aux '() (car ls) (cdr ls)))
+
+(defun js-arrs (ls)
+  (js-arrs-aux '() (car ls) (cdr ls)))
+
 (defun js-fdef-bindingp (head tail)
   (finite-match (cons head tail)
                 (list
@@ -1720,26 +2227,73 @@
                  )
                 ))
 
-(defun group-js-fdef-binding (head tail size)
-  (list (map
-         'list
-         #'(lambda (x)  (if (is-js-fdef x) (js-fdef-bindings x) x))
-         (head-n (cons head tail) size))
-        (car (popl-n tail (- size 1)))
-        (popl-n tail size)))
+(defun js-var-bindingp (head tail)
+  (finite-match (cons head tail)
+                (list
+                 (list :m #'is-js-word-or-arr)
+                 (list :o #'is-blank-group)
+                 (list :m #'is-eq-group)
+                 (list :o #'is-blank-group)
+                 (list :mc #'is-stmt)
+                 )
+                ))
 
-(defun js-fdef-bindings-impl (ls)
-  (js-fdef-bindings-aux '() (car ls) (cdr ls)))
+(defun js-mbr-chainp (head tail)
+  (finite-repeating-match (cons head tail)
+       (list
+        (list :m #'is-js-word-or-fcall-or-arr)
+        (list :o #'is-blank-group)
+        (list :m #'is-dot)
+        (list :o #'is-blank-group))
+       (list
+        (list :m #'is-word-arr-fcall-vbind-fbind))))
 
-; Function binding def: name '=' js-fdef
-(defun js-fdef-bindings (ls)
-  (js-fdef-bindings-impl ls))
+(defun js-var-bindings (ls)
+  (js-var-bindings-aux '() (car ls) (cdr ls)))
+
+(defun js-mbr-chain (ls)
+  (js-mbr-chain-aux '() (car ls) (cdr ls)))
+
+(defun js-obj-lit (ls)
+  (js-obj-lit-aux '() (car ls) (cdr ls)))
 
 
 (defun group-js-curly-ctl-stmt (head tail size)
   (list (map
          'list
          #'(lambda (x) (if (is-nestable x) (js-curly-ctl-stmts x) x))
+         (head-n (cons head tail) size))
+        (car (popl-n tail (- size 1)))
+        (popl-n tail size)))
+
+(defun group-js-var-binding (head tail size)
+  (list (map
+        'list
+        #'(lambda (x)  (if (is-js-fdef x) (js-var-bindings x) x))
+        (head-n (cons head tail) size))
+        (car (popl-n tail (- size 1)))
+        (popl-n tail size)))
+
+(defun group-js-mbr-chain (head tail size)
+  (list (map
+         'list
+         #'(lambda (x)
+             (if (or (is-js-fdef-binding x) (is-js-fcall x)
+                     (is-js-var-binding x) (is-js-arr x)
+                     )
+                 (js-mbr-chain x)
+                 x))
+         (head-n (cons head tail) size))
+        (car (popl-n tail (- size 1)))
+        (popl-n tail size)))
+
+(defun group-js-mbr-chain2 (head tail size)
+  (list (map
+         'list
+         #'(lambda (x)
+             (if (or (is-js-fdef-binding x) (is-js-fcall x))
+                 (js-mbr-chain x)
+                 x))
          (head-n (cons head tail) size))
         (car (popl-n tail (- size 1)))
         (popl-n tail size)))
@@ -1754,7 +2308,7 @@
        (group-and-continue js-do-while-stmts-aux group-js-do-while-stmt sz))
       ((is-js-fdef head)
        (xform-and-continue js-do-while-stmts-aux xform-js-fdef-cgroup js-do-while-stmts))
-      ((is-fcall head)
+      ((is-js-fcall head)
        (xform-and-continue js-do-while-stmts-aux xform-fcall-pgroup js-do-while-stmts))
       ((is-js-curly-ctl-stmt head)
        (xform-and-continue js-do-while-stmts-aux
@@ -1800,19 +2354,19 @@
      (progn  acc))
     ))
 
+
 ;;; Match array-accesses. Should be similar to fcalls.
 (defun jsarrs (ls)
   (jsarrs-aux '() (car ls) (cdr ls)))
 
-;;; Match bindings (assignments using `=`)
-(defun bindings (ls)
-  )
+(defun js-vars (ast)
+  ast)
 
 ;;; Match object-literal bindingr (assignments using `:`)
 ;;; Note that we don't want to accidentally match the `:` of the ternary
 ;;; `?:` operator.
 ;;; Obviously, if the l-val is not a word (and is not true or false) we can
-;;; ignore it. If it is a word, 
+;;; ignore it. If it is a word,
 (defun obj-bindings (ls)
   )
 
@@ -1950,7 +2504,7 @@
 
 (defun get-fcall-params (ls)
   (progn
-    (assert (is-fcall ls))
+    (assert (is-js-fcall ls))
     (get-first-of-type ls #'is-paren-group)))
 
 (defun get-fcall-param-aux (ls r)
@@ -1993,7 +2547,7 @@
 
 (defun get-fcall-name (ls)
   (progn
-    (assert (is-fcall ls))
+    (assert (is-js-fcall ls))
     (car ls)))
 
 
@@ -2104,7 +2658,7 @@
            ((funcall test name) (funcall fn name)))))
                 (walk (pathname-as-directory dirname))))
 
-(defun file-to-char-ls (input)
+(defun file-to-char-ls-impl (input)
   (let ((str-ls '())
         (in (open input :if-does-not-exist nil)))
     (when in
@@ -2113,7 +2667,7 @@
       (close in)
       str-ls)))
 
-(defun file-to-form (input)
+(defun file-to-form-impl (input)
   (let* ((in (open input :if-does-not-exist nil))
          (form nil)
          (empty nil))
@@ -2126,13 +2680,47 @@
       )
     (values form empty)))
 
-(defun form-to-file (form output)
+
+(defun file-to-forms-impl (input)
+  (let* ((in (open input :if-does-not-exist nil))
+         (form nil)
+         (forms '())
+         (empty nil))
+    (cond
+      ((and in)
+       (tagbody again
+          (setf form (read in nil 'eof))
+          (cond
+            ((not (equal form 'eof))
+             (pushr! forms form)
+             (go again))
+            )
+          )
+       (close in)
+       (if (not forms)
+           (setf empty t)))
+      )
+    (values forms empty)))
+
+(defun file-to-forms (input)
+  (file-to-forms-impl input))
+
+(defun form-to-file-impl (form output)
   (let ((out (open output :direction :output :if-exists :supersede
                                     :if-does-not-exist :create)))
     (prin1 form out)
     (finish-output out)
     (close out)
   ))
+
+(defun file-to-char-ls (input)
+  (file-to-char-ls-impl input))
+
+(defun file-to-form (input)
+  (file-to-form-impl input))
+
+(defun form-to-file (form output)
+  (form-to-file-impl form output))
 
 (defun test-cmt-str ()
   (let ((in "abc/* \"xyz\" */||\"abc/* xyz */\"//abc\"a")
@@ -2200,7 +2788,7 @@
 
 (defun unfold-list (ls)
   (if (= (length ls) 0)
-      (return-from fold-list nil))
+      (return-from unfold-list nil))
   (let* ((unfls '()))
     (map 'nil
          #'(lambda (p)
@@ -2315,7 +2903,8 @@
      (if (not ast)
          (setf ast (load-ast repo file commit)))
      (let* ((type-nm (,type-namer type))
-            (outdir (str-cat blip-repo-meta repo "/root/" file "/" commit "/path-index/"))
+            (fcommit (git-file-latest-commit-until repo file commit))
+            (outdir (str-cat blip-repo-meta repo "/root/" file "/" fcommit "/path-index/"))
             (out (str-cat outdir type-nm)))
        (mkdir outdir)
        (form-to-file (,indexer ast type) out))))
@@ -2326,7 +2915,8 @@
 (defmacro! load-x-path-index (name type-namer)
   `(defun ,name (repo file commit &optional type ast)
      (let* ((type-nm (,type-namer type))
-            (in (str-cat blip-repo-meta repo "/root/" file "/" commit "/path-index/"
+            (fcommit (git-file-latest-commit-until repo file commit))
+            (in (str-cat blip-repo-meta repo "/root/" file "/" fcommit "/path-index/"
                          type-nm))
             (ix (file-to-form in)))
        ix
@@ -2388,7 +2978,7 @@
                          (pushr! cl
                                  (list e (count e list :test dedup))))
                ddl)
-          (stable-sort cl #'< :key #'cadr)
+          (setf cl (stable-sort cl #'< :key #'cadr))
           ))
     (if (and cl)
         cl
@@ -2397,7 +2987,8 @@
 
 (defmacro! load-list-nodes (name suf)
   `(defun ,name (repo file commit)
-     (let ((in (str-cat blip-repo-meta repo "/root/" file "/" commit ,suf)))
+     (let* ((fcommit (git-file-latest-commit-until repo file commit))
+            (in (str-cat blip-repo-meta repo "/root/" file "/" fcommit ,suf)))
        (file-to-form in)
        )
      )
@@ -2417,8 +3008,9 @@
 (defmacro! cache-x-list-node (name list-impl suf)
   `(defun ,name (repo file commit)
     (let* ((ast (load-ast repo file commit))
-          (outdir (str-cat blip-repo-meta repo "/root/" file "/" commit))
-          (out (str-cat outdir ,suf))
+           (fcommit (git-file-latest-commit-until repo file commit))
+           (outdir (str-cat blip-repo-meta repo "/root/" file "/" fcommit))
+           (out (str-cat outdir ,suf))
           )
       ;TODO implement a cache-ast function that will cache ASTs on a per-file basis
       ;TODO cleanup parse-x-files-at-commit
@@ -2456,7 +3048,7 @@
 (load-list-nodes load-list-fdefs "/ls-fdefs")
 (load-list-nodes load-list-fbinds "/ls-fbinds")
 
-(x-list-node-impl js-list-fcalls-impl is-fcall get-fcall-name)
+(x-list-node-impl js-list-fcalls-impl is-js-fcall get-fcall-name)
 (cache-x-list-node cache-js-list-fcalls js-list-fcalls-impl "/ls-fcalls")
 
 (x-list-node-impl js-list-fdefs-impl is-js-fdef get-js-fdef-name)
@@ -2523,7 +3115,7 @@
            ))
 
 (defun js-fcall-count (ast)
-  (agg-ast ast #'is-fcall
+  (agg-ast ast #'is-js-fcall
            #'(lambda (n s w)
                (incf (gethash (char-ls-to-str (get-fcall-name n)) counts 0)))
            #'<
@@ -2531,7 +3123,7 @@
            ))
 
 (defun js-fcall-params-count (ast)
-  (agg-ast ast #'is-fcall
+  (agg-ast ast #'is-js-fcall
            #'(lambda (n s w)
                (incf (gethash (char-ls-to-str (flatten (get-fcall-params n))) counts 0)))
            #'<
@@ -2565,6 +3157,20 @@
 (defun print-all-requires (ast)
   (walk-tree ast #'is-require #'walk-print-fcall-args '() '())
    )
+
+(defun print-var-names (ast)
+  (let ((counts (make-hash-table :test #'equal))
+        (count 0))
+    (walk-tree ast #'is-js-var-binding
+               #'(lambda (v s w)
+                   (incf (gethash (char-ls-to-str (car v)) counts 0))
+                   ;(pushr! names (char-ls-to-str (car v)))
+                   (incf count)
+                   )
+               '() '())
+    (sort (hash-table-to-alist counts) #'< :key #'cdr)
+    ;count
+  ))
 
 (defun print-all-arrays (ast)
   (walk-tree ast #'is-jsarr #'(lambda (e s w) (print (flatten e))) '() '()))
@@ -2729,7 +3335,10 @@
               (remove nil (map 'list
                                ;;; TODO use get-subtree here
                    #'(lambda (p)
-                       (let ((count (count-node-in-ast test idx-bool (cadr p))))
+                       (let ((count (count-node-in-ast test idx-bool
+                                                       (get-path-subtree
+                                                        (fmt-path (car p))
+                                                        index pov) :deep t)))
                          (if (and (or (and zero (= 0 count)) (> count 0))
                                   (or (not pre) (is-str-prefix pre (fmt-path (car p)))))
                              (list (fmt-path (car p)) count))))
@@ -2918,7 +3527,7 @@
                        (str-to-char-ls "{}/ >>>") (gen-nl-ws (* 4 depth)))))
       ((and (> depth 0) (is-js-fdef-binding n))
        (values (gen-nl-ws (* 4 depth)) (str-to-char-ls "<<< ")
-               (get-js-fdef-name n) (str-to-char-ls "=/ >>>")))
+               (get-js-fbind-name n) (str-to-char-ls "=/ >>>")))
       ((and t)
        (values n))
       )
@@ -3100,6 +3709,13 @@
            (gen-blank) (enclose (gen-chars "{") body (gen-chars "}")))
   )
 
+(defun gen-js-ctl-struct (ctl-word test body)
+  (enclose (gen-word ctl-word) (gen-blank)
+           (enclose (gen-chars "(") test (gen-chars ")"))
+           (enclose (gen-chars "{") body (gen-chars "}"))
+           ))
+
+
 ;;; XXX Want to supply a list of 1 or more cond-pairs (a cond-test ast and a
 ;;; body ast) and a final, optional else-body.
 (defun gen-js-if (conds &optional else)
@@ -3107,13 +3723,7 @@
         (res '()))
     (map 'nil #'(lambda (c)
                   (pushr! if-asts
-                          (enclose (gen-word "if")
-                                   (enclose (gen-chars "(")
-                                            (car cond)
-                                            (gen-chars ")"))
-                                   (enclose (gen-char "{")
-                                            (cadr cond)
-                                            (gen-char "}")))
+                          (gen-js-ctl-struct "if" (car cond) (cadr cond))
                   ))
          conds
          )
@@ -3129,19 +3739,13 @@
     )
   )
 
-(defun gen-js-ctl-struct (ctl-word test body)
-  (enclose (gen-word ctl-word) (gen-blank)
-           (enclose (gen-chars "(") test (gen-chars ")"))
-           (enclose (gen-chars "{") body (gen-chars "}"))
-           ))
-
 (defun gen-js-while (test body)
   (gen-js-ctl-struct "while" test body))
 
-(defun gen-js-for ()
+(defun gen-js-for (test body)
   (gen-js-ctl-struct "for" test body))
 
-(defun gen-js-do-while ()
+(defun gen-js-do-while (test body)
   (enclose (gen-word "do") (gen-blank)
            (enclose (gen-chars "{") body (gen-chars "}"))
            (gen-blank) (gen-word "while") (gen-blank)
@@ -3151,6 +3755,40 @@
 
 (defun gen-js-fcall (name args)
   (enclose (gen-word name) (gen-blank) (gen-js-fcargs args) (gen-chars ";")))
+
+(defun gen-js-mbr (&rest wds)
+  "Generates a chain of at least 2 members. Arguments are either words or
+   strings."
+  (assert (> (length wds) 1))
+  (let ((ret '()))
+    (mapahead #'(lambda (p n r)
+                  (cond
+                    ((and r (stringp n))
+                     (pushr! ret (gen-word n) (gen-chars "."))
+                     )
+                    ((and r (is-word-group n))
+                     (pushr! ret n (gen-chars "."))
+                     )
+                    ((and (not r) (stringp n))
+                     (pushr! ret (gen-word n))
+                     )
+                    ((and (not r) (is-word-group n))
+                     (pushr! ret n)
+                     )
+                  ))
+              wds)
+    ret
+    )
+  )
+
+(defun gen-js-mtd (wds func args)
+  "Generate a method call and attach it to the the end of a member-chain"
+  (append (apply #'gen-js-mbr wds) (gen-chars ".") (gen-js-fcall func args)))
+
+(defun gen-js-obj-lit (&rest kvps)
+  "Takes list of KV-pairs to create obj lit. Keys are strings/words,
+   values are ASTs."
+  )
 
 (defun glue (&rest lss)
   (let* ((res '()))
@@ -3164,11 +3802,24 @@
 (defun js-to-ast (input)
   (pipeline input #'cmt-str #'white-space
             #'blanks #'words #'punctuations
-            #'nestables #'fcalls #'js-fdefs
+            #'nestables
+            #'js-fdefs
+            #'js-fcalls
+            #'js-arrs
+            #'js-var-bindings
+            #'js-mbr-chain
+            ;#'js-obj-lit
+            #'js-vars
             #'js-curly-ctl-stmts
             #'js-do-while-stmts
             #'js-flat-ctl-stmts
-            #'js-fdef-bindings #'jsarrs))
+            ))
+
+(defun cl-to-ast (input)
+  (pipeline input #'cl-cmt-str #'white-space
+            #'cl-blanks #'words #'punctuations
+            #'nestables
+   ))
 
 (defun test-if-parse ()
   (let ((in1 "call(\"arg\", function (a, b) { if (true) if (true) { if (true) { return 1 }};});")
@@ -3180,6 +3831,20 @@
         )
   (js-to-ast
    (str-to-char-ls in6))))
+
+(defun test-varbind-parse ()
+  (let ((in1 "if (x) { function foo (a, b) {var mvar = 2 + 2 + call(); for (mvar = 0; true; mvar++) { print('heeeeeeey'); }}; bar(); foo(); x = 4.2; }")
+        (in2 "if (a, b) {call(); var func = function foo (a, b) {hello = function (a) {b};};}")
+        (in3 "function a (1, 2) {foo = function (1, 2) {4};}"))
+    (js-to-ast
+     (str-to-char-ls in2))))
+
+(defun test-mbrchain-parse ()
+  (let ((in2 "if (a, b) {call().a.b.c; var func = function foo (a, b) {hello.fn = function (a) {b.mycall().mymbr = {a: b, b: c, c: d.e, e: f};};};}")
+        (in3 "function (a) {a.b[10].c[10] = function (a) {myCall(); function () {a.b.c}; return a = a.b.call(function () {a.b.c});};}")
+        (in4 "a.b.c = q.w.e;"))
+    (js-to-ast
+     (str-to-char-ls in3))))
 
 ;;; TODO implement this
 (defun c-pre-proc (ls)
@@ -3946,6 +4611,18 @@
     ;(str-split "\\n" lc)
     ))
 
+(defun git-file-latest-commit-until (repo path commit)
+  "Only works for files that are present in current branch"
+  (let ((lc nil))
+    (pushdir (str-cat blip-repos repo "/"))
+    (setf lc (inferior-shell:run/ss (list "git" "rev-list"
+                                          "-1" commit
+                                          path)))
+    (popdir)
+    lc
+                                        ;(str-split "\\n" lc)
+    ))
+
 (defun git-file-all-commits (repo path)
   "Only works for files that are present in current branch"
   (let ((lc nil))
@@ -4114,7 +4791,7 @@
   (expand-commit! repo commit)
   (let* ((files (files-present-at-commit repo commit))
          (deps '()))
-    (map #'(lambda (f) (pushr! deps (js-file-deps repo f commit))) files)
+    (map 'nil #'(lambda (f) (pushr! deps (js-file-deps repo f commit))) files)
     (reduce #'append (remove-if #'not deps)))
   )
 

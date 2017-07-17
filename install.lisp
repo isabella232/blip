@@ -1,0 +1,2 @@
+(load "startup.lisp")
+(install)

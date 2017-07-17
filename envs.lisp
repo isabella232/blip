@@ -5,9 +5,12 @@
 ;;; Copyright 2017 Joyent, Inc.
 ;;; Copyright 2017 Nicholas Zivkovic
 
-(setf envs nil)
+(defvar env-stack nil)
+(defvar env-pool nil)
 
-(setf env-avail nil)
+;(setf env-avail (file-to-form blip-env-avail))
+(defvar env-avail nil)
+
 
 (defmacro! all-files (repo commit suf pref)
   `(list-files-at-commit
@@ -54,6 +57,7 @@
 (defclass env ()
   ((repo :initarg :repo)
    (commit :initarg :commit)
+   (name :initarg :name)
    (indexer :initarg :indexer)
    (idx-type :initarg :idx-type)
    (idx-type-conv :initarg :idx-type-conv)
@@ -69,20 +73,25 @@
    (ast-ls-word :initarg :ast-ls-word))
    )
 
-(defun ls-envs ()
+(defun env-ls ()
   env-avail)
+
+(defun env-stack ()
+  (map 'list #'(lambda (e) (slot-value e 'name)) env-stack))
 
 (defmacro! new-env%% (name repo commit indexer idx-type idx-type-conv
                            files pagesz ast-fmt parser parser-suf parser-pref
                            ast-ls-call ast-ls-def ast-ls-fbind ast-ls-word)
-  `(let ((tmp (make-instance 'env :repo ,repo :commit ,commit :indexer ,indexer
-                  :idx-type ,idx-type :idx-type-conv ,idx-type-conv :files ,files
-                  :pagesz ,pagesz :ast-fmt ,ast-fmt :parser ,parser
-                  :parser-suf ,parser-suf :parser-pref
+  `(let ((tmp (make-instance 'env :repo ,repo :name ',name :commit ,commit
+                  :indexer ,indexer :idx-type ,idx-type :idx-type-conv
+                  ,idx-type-conv :files ,files :pagesz ,pagesz :ast-fmt ,ast-fmt
+                  :parser ,parser :parser-suf ,parser-suf :parser-pref
                   ,parser-pref :ast-ls-call ,ast-ls-call :ast-ls-def ,ast-ls-def
                   :ast-ls-fbind ,ast-ls-fbind :ast-ls-word ,ast-ls-word)))
     (pushr! env-avail ',name)
-    (setf ,name tmp)
+    (pushr! env-pool tmp)
+    ;(setf ,name tmp)
+     ;;; TODO: save this env to a file
     tmp
     )
   )
@@ -99,6 +108,7 @@
 
 (defmacro! new-js-env (name repo-nm commit &optional pref)
   `(new-env ,name
+     ;(name ',name)
      (repo ,repo-nm)
      (commit (expand-commit ,repo-nm ,commit))
      (indexer #'index-all-js-paths)
@@ -119,6 +129,7 @@
 
 (defmacro! new-c-env (name repo-nm commit &optional pref)
   `(new-env ,name
+    ;(name ',name)
     (repo ,repo-nm)
     (commit (expand-commit ,repo-nm ,commit))
     (indexer #'index-all-c-paths)
@@ -137,58 +148,22 @@
     )
   )
 
-(new-js-env mmachine "github/joyent/node-mooremachine" :head)
-
-(new-js-env vmapi "github/joyent/sdc-vmapi" :head)
-
-(new-js-env vasync "github/davepacheco/node-vasync" :head)
-
-(new-js-env kang "github/davepacheco/kang" :head)
-
-(new-js-env marlin-dash "github/joyent/manta-marlin-dashboard" :head)
-
-(new-js-env marlin "github/joyent/manta-marlin" :head)
-
-(new-js-env muskie "github/joyent/manta-muskie" :head)
-
-(new-js-env async "github/caolan/async" :head)
-
-(new-js-env warden "github/joyent/node-restify-warden" :head)
-
-(new-js-env bunyan "github/trentm/node-bunyan" :head)
-
-(new-js-env sdc-docker "github/joyent/sdc-docker" :head)
-
-(new-js-env napi "github/joyent/sdc-napi" :head)
-
-(new-js-env node-ufds "github/joyent/node-ufds" :head)
-
-(new-js-env node-ufds-ctl "github/joyent/node-ufds-controls" :head)
-
-(new-js-env sdc-ufds "github/joyent/sdc-ufds" :head)
-
-(new-c-env mike-sdb "github/sdimitro/minions" :head "sdb/libsdb")
-
-(new-c-env libuv "github/libuv/libuv" :head "src/")
-
-(new-c-env bk "github/bitkeeper-scm/bitkeeper" :head)
-
-(new-c-env tmux "github/tmux/tmux" :head)
-
-(new-c-env pg "github/postgres/postgres" :head)
+;(form-to-file (env-ls) blip-env-avail)
 
 (defun pushenv (e)
-  (pushr! envs e))
+  (pushr! env-stack e)
+  )
 
 (defun popenv ()
-  (popr! envs))
+  (popr! env-stack)
+  )
 
 (defun get-env-var (var)
-  (let ((e (car (last envs))))
+  (let ((e (car (last env-stack))))
     (slot-value e var)))
 
 (defun set-env-var (var val)
-  (let ((e (car (last envs))))
+  (let ((e (car (last env-stack))))
     (setf (slot-value e var) val)
     )
   )
@@ -325,6 +300,16 @@
     )
   )
 
+(defun reconstruct-repo ()
+  (ast-parse t)
+  (index-build :force t)
+  (ast-ls-fcalls t :force t)
+  (ast-ls-fdefs t :force t)
+  (ast-ls-words t :force t)
+  (ast-ls-fbinds t :force t)
+  t
+  )
+
 
 (defun index-get-subtree-impl (index path &optional pov)
   ;(map 'list #'(lambda (e) (ast-to-str (cdr e))) (get-path-subtree path index pov)))
@@ -358,9 +343,9 @@
          (setf rpref (car spref))
      ;;; XXX Given that f4 is a superset of f1,2,3 we might want to get rid of
      ;;; those.
-     (setf f1 (ast-extract-files (ast-ls-fcalls t :pref rpref)))
-     (setf f2 (ast-extract-files (ast-ls-fdefs t :pref rpref)))
-     (setf f3 (ast-extract-files (ast-ls-fbinds t :pref rpref)))
+     ;(setf f1 (ast-extract-files (ast-ls-fcalls t :pref rpref)))
+     ;(setf f2 (ast-extract-files (ast-ls-fdefs t :pref rpref)))
+     ;(setf f3 (ast-extract-files (ast-ls-fbinds t :pref rpref)))
      (setf f4 (ast-extract-files (ast-ls-words t :pref rpref)))
      (set-env-files (remove-duplicates (append f1 f2 f3 f4) :test #'equal))
      (setf res ,@body)
@@ -439,21 +424,6 @@
                              :fmt t))
         indices)))
 
-(defun default-bk-files ()
-  (set-env-file-depth 2))
-(pushenv napi)
-(pushenv muskie)
-(pushenv sdc-docker)
-(set-env-file "lib/backends/sdc/containers.js")
-(pushenv bk)
-(default-bk-files)
-(pushenv pg)
-(pushenv node-ufds-ctl)
-(pushenv node-ufds)
-(pushenv sdc-ufds)
-;(pushenv tmux)
-;(set-env-file "format.c")
-;postmaster.c: demerit!
 (defun ifdef-metrics ()
   (sort
    (remove-if #'not
@@ -487,3 +457,30 @@
               :key #'cadr)
    #'< :key #'cadadr)
   )
+
+
+(defun load-env (env)
+  "Reads in the cfg file, walks each record until it finds the appropriate
+   env-name and evals it. Saves us a lot of (git-related) IO."
+  (let ((ls (file-to-forms blip-env-cfg))
+        (result nil))
+    (map 'nil #'(lambda (e)
+                  (if (equal (cadr e) env)
+                      (progn (setf result (eval e)))))
+         ls)
+    result
+    ))
+
+(defun have-env (env)
+  "Confirms that an env is present in the cfg file. Does not eval it."
+  (let ((ls (file-to-forms blip-env-cfg))
+        (have nil))
+    (map 'nil #'(lambda (e)
+                  (if (equal (cadr e) env)
+                      (setf have t)))
+         ls)
+    have
+    ))
+
+(defun find-env (name)
+  (find-if #'(lambda (e) (equal (slot-value e 'name) name)) env-avail))
