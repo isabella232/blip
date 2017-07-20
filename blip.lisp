@@ -114,7 +114,7 @@
   "Gets the last character of a string"
   (char s (- (length s) 1)))
 
-(defun is-str-suffix (suf str)
+(defun is-str-suffix-one (suf str)
   "Checks if the strings has the given suffix"
   (if (> (length suf) (length str))
       nil
@@ -123,7 +123,7 @@
         (string= suf end)
         )))
 
-(defun is-str-prefix (pre str)
+(defun is-str-prefix-one (pre str)
   "Checks if the strings has the given prefix"
   (if (> (length pre) (length str))
       nil
@@ -131,6 +131,44 @@
              (end (subseq str 0 off)))
         (string= pre end)
         )))
+
+(defun fn-or (&rest args)
+  "Apparently `or` is a macro, not a function, so we can't just pass it as such"
+  (let ((cur args))
+    (tagbody again
+       (cond
+         ((not cur)
+          (return-from fn-or nil))
+         ((not (car cur))
+          (setf cur (cdr cur))
+          (go again))
+         ((and t)
+          (return-from fn-or t))
+         )
+       )
+    )
+  )
+
+(defmacro! def-are-strs-*ix (ls-name str-name)
+  `(defun ,ls-name (*s str)
+     "Applies is-str-suffix-str over a list, returns true if any match"
+     (apply #'fn-or (map 'list #'(lambda (s) (,str-name s str)) *s))
+     ))
+
+(def-are-strs-*ix are-strs-suffix is-str-suffix-one)
+(def-are-strs-*ix are-strs-prefix is-str-prefix-one)
+
+(defmacro! def-is-str-*ix (gen-name ls-name str-name)
+  `(defun ,gen-name (*/s str)
+     (if (listp */s)
+         (,ls-name */s str)
+         (,str-name */s str)
+         )
+     ))
+
+(def-is-str-*ix is-str-suffix are-strs-suffix is-str-suffix-one)
+(def-is-str-*ix is-str-prefix are-strs-prefix is-str-prefix-one)
+
 
 (defun str-has (regex str)
   (cl-ppcre:all-matches regex str))
@@ -371,13 +409,39 @@
   (print form)
   (format t "~%"))
 
-(defun main ()
-  "The main entry point for this program."
-  (let* ((argv sb-ext:*posix-argv*)
-         (verb (cadr argv))
+(defun main-impl (argv)
+  (let* ((verb (cadr argv))
          (nouns (cddr argv)))
     (cond
       ((is-cmd-verb "help")
+       (format t "env-ls ~%")
+       (format t "env-stack ~%")
+       (format t "top-env ~%")
+       (format t "pushenv $env-name ~%")
+       (format t "popenv $env-name ~%")
+       (format t "index-build [--force] ~%")
+       (format t "index-prefix $path-prefix [up|down] [--page $pg-num] [--force] ~%")
+       (format t "index-suffix $path-suffix [up|down] [--page $pg-num] [--force] ~%")
+       (format t "index-get-subtree $path [up|down] [--page $pg-num] [--force] ~%")
+       (format t "index-get-subtree-str $path [up|down] [--fmt $formatter] ~
+                  [--page $pg-num] [--force] ~%")
+       (format t "index-word-count $word [up|down] [--page $pg-num] [--force] ~%")
+       (format t "index-uniq [up|down] [--page $pg-num] [--force] ~%")
+       (format t "index-path-depth [up|down] [--page $pg-num] [--force] ~%")
+       (format t "ast-ls-files ~%")
+       (format t "ast-ls-fdefs [--count] [--pref $prefix] [--force] ~%")
+       (format t "ast-ls-fbinds [--count] [--pref $prefix] [--force] ~%")
+       (format t "ast-ls-fcalls [--count] [--pref $prefix] [--force]  ~%")
+       (format t "ast-parse [--force]  ~%")
+       (format t "reconstruct-repo ~%")
+       (format t "github-users ~%")
+       (format t "github-user-add $username ~%")
+       (format t "github-user-rem $username ~%")
+       (format t "github-user-clone $username ~%")
+       (format t "github-user-pull $username ~%")
+       (format t "pull-env ~%")
+       (format t "strap-repo ~%")
+       (format t "eval $lisp-code ~%")
        )
       ((is-cmd-verb "compute-disk-usage")
        (let ((date (get-universal-time)))
@@ -549,6 +613,12 @@
        (sb-ext:exit :code -1))
       )
     ))
+
+(defun main ()
+  "The main entry point for this program."
+  (let* ((argv sb-ext:*posix-argv*))
+    (main-impl argv))
+  )
 
 (defun exec-self ()
   "This function executes this file as a child process"
@@ -3351,12 +3421,12 @@
         (setf pairs (path-index-revstr index)))
     (list (path-index-file index) (remove nil
           (map 'list
-               #'(lambda (p) (progn
-                              ;(print prefix)
-                              ;(print (fmt-path (car p)))
-                              (if
-                              (is-str-prefix prefix (fmt-path (car p)))
-                              (fmt-path (car p)))))
+               #'(lambda (p)
+                   (cond
+                     ((is-str-prefix prefix (fmt-path (car p)))
+                      (fmt-path (car p)))
+                     )
+                   )
                pairs))))
   )
 
@@ -4669,7 +4739,7 @@
   )
 
 
-(defun parse-x-files-at-commit (repo commit &key force suf pref parser whitelist)
+(defun parse-x-files-at-commit (repo commit &key force suf pref parser whitelist antipref)
   (expand-commit! repo commit)
   (let ((files (files-present-at-commit repo commit))
         (curbr (git-current-branch repo)))
@@ -4678,6 +4748,7 @@
     (map 'nil #'(lambda (file)
                  (if (and (if (and suf) (is-str-suffix suf file) t)
                           (if (and pref) (is-str-prefix pref file) t)
+                          (if (and antipref) (not (is-str-prefix antipref file)) t)
                           )
                      (let* ((slot (str-cat blip-asts repo "/" file))
                             (revid (git-file-latest-commit repo file))
@@ -4710,7 +4781,7 @@
 (lol:defmacro! expand-commit! (r c)
   `(setf ,c (expand-commit ,r ,c)))
 
-(defun list-files-at-commit (repo commit &key suf pref)
+(defun list-files-at-commit (repo commit &key suf pref antipref)
   (expand-commit! repo commit)
   (let ((files (files-present-at-commit repo commit))
         (list '()))
@@ -4718,6 +4789,7 @@
     (map 'nil #'(lambda (file)
                  (if (and (if (and suf) (is-str-suffix suf file) t)
                           (if (and pref) (is-str-prefix pref file) t)
+                          (if (and antipref) (not (is-str-prefix antipref file)) t)
                           )
                      (pushr! list file)))
              files)

@@ -12,20 +12,30 @@
 (defvar env-avail nil)
 
 
-(defmacro! all-files (repo commit suf pref)
-  `(list-files-at-commit
-                 ,repo ,commit :suf ,suf :pref ,pref))
+(defun all-files (repo commit suf pref antipref &optional depth)
+  (let* ((fs (list-files-at-commit
+                 repo commit :suf suf :pref pref :antipref antipref)))
+    (cond
+      ((and depth)
+       (map 'list #'(lambda (p) (apply #'str-cat p))
+            (map 'list #'(lambda (p) (intersperse p "/" t))
+                 (remove-if #'(lambda (p) (> (length p) depth))
+                            (map 'list #'(lambda (f) (str-split "/" f)) fs)))))
+      ((not depth)
+       fs))
+    ))
 
-(defun all-files-if (repo commit suf pref test)
+(defun all-files-if (repo commit suf pref antipref test)
   (remove nil
           (map 'list #'(lambda (f) (if (funcall test f) f nil))
-               (all-files repo commit suf pref))))
+               (all-files repo commit suf pref antipref))))
 
 (defun set-env-all-files ()
   (set-env-var 'files (all-files (get-env-var 'repo)
                                  (get-env-var 'commit)
                                  (get-env-var 'parser-suf)
-                                 (get-env-var 'parser-pref))))
+                                 (get-env-var 'parser-pref)
+                                 (gen-env-var 'parser-antipref))))
 
 (defun set-env-file (&rest fs)
     (set-env-var 'files fs)
@@ -39,7 +49,8 @@
   (let ((fs (all-files (get-env-var 'repo)
                        (get-env-var 'commit)
                        (get-env-var 'parser-suf)
-                       (get-env-var 'parser-pref))))
+                       (get-env-var 'parser-pref)
+                       (get-env-var 'parser-antipref))))
     (set-env-var 'files (map 'list #'(lambda (p) (apply #'str-cat p))
          (map 'list #'(lambda (p) (intersperse p "/" t))
               (remove-if #'(lambda (p) (> (length p) max-depth))
@@ -67,6 +78,7 @@
    (parser :initarg :parser)
    (parser-suf :initarg :parser-suf)
    (parser-pref :initarg :parser-pref)
+   (parser-antipref :initarg :parser-antipref)
    (ast-ls-call :initarg :ast-ls-call)
    (ast-ls-def :initarg :ast-ls-def)
    (ast-ls-fbind :initarg :ast-ls-fbind)
@@ -81,12 +93,14 @@
 
 (defmacro! new-env%% (name repo commit indexer idx-type idx-type-conv
                            files pagesz ast-fmt parser parser-suf parser-pref
+                           parser-antipref
                            ast-ls-call ast-ls-def ast-ls-fbind ast-ls-word)
   `(let ((tmp (make-instance 'env :repo ,repo :name ',name :commit ,commit
                   :indexer ,indexer :idx-type ,idx-type :idx-type-conv
                   ,idx-type-conv :files ,files :pagesz ,pagesz :ast-fmt ,ast-fmt
                   :parser ,parser :parser-suf ,parser-suf :parser-pref
-                  ,parser-pref :ast-ls-call ,ast-ls-call :ast-ls-def ,ast-ls-def
+                  ,parser-pref :parser-antipref ,parser-antipref :ast-ls-call
+                  ,ast-ls-call :ast-ls-def ,ast-ls-def
                   :ast-ls-fbind ,ast-ls-fbind :ast-ls-word ,ast-ls-word)))
     (pushr! env-avail ',name)
     (pushr! env-pool tmp)
@@ -101,12 +115,12 @@
     ;(assert (and repo commit indexer idx-type idx-type-conv files parser
                  ;parser-suf parser-pref ast-ls-call ast-ls-def))
      (new-env%% ,name repo commit indexer idx-type idx-type-conv files pagesz
-                ast-fmt parser parser-suf parser-pref ast-ls-call ast-ls-def ast-ls-fbind
-                ast-ls-word)
+                ast-fmt parser parser-suf parser-pref parser-antipref ast-ls-call
+                ast-ls-def ast-ls-fbind ast-ls-word)
     )
   )
 
-(defmacro! new-js-env (name repo-nm commit &optional pref)
+(defmacro! new-js-env (name repo-nm commit &optional pref antipref depth)
   `(new-env ,name
      ;(name ',name)
      (repo ,repo-nm)
@@ -114,12 +128,13 @@
      (indexer #'index-all-js-paths)
      (idx-type :funcs)
      (idx-type-conv #'js-idx-type-to-test)
-     (files (all-files repo commit ".js" ,pref))
+     (files (all-files repo commit ".js" ,pref ,antipref ,depth))
      (pagesz 70)
      (ast-fmt #'(lambda (a) (js-ast-fmt nil a :simtupid)))
      (parser #'js-to-ast)
      (parser-suf ".js")
      (parser-pref ,pref)
+     (parser-antipref ,antipref)
      (ast-ls-call #'js-list-fcalls)
      (ast-ls-def #'js-list-fdefs)
      (ast-ls-fbind #'js-list-fbinds)
@@ -127,7 +142,7 @@
      )
   )
 
-(defmacro! new-c-env (name repo-nm commit &optional pref)
+(defmacro! new-c-env (name repo-nm commit &optional pref antipref depth)
   `(new-env ,name
     ;(name ',name)
     (repo ,repo-nm)
@@ -135,12 +150,13 @@
     (indexer #'index-all-c-paths)
     (idx-type :funcs)
     (idx-type-conv #'c-idx-type-to-test)
-    (files (all-files repo commit ".c" ,pref))
+    (files (all-files repo commit ".c" ,pref ,antipref ,depth))
     (pagesz 70)
     (ast-fmt #'(lambda (a) (c-ast-fmt nil a :simtupid)))
     (parser #'c-to-ast)
     (parser-suf ".c")
     (parser-pref ,pref)
+    (parser-antipref ,antipref)
     (ast-ls-call #'c-list-fcalls)
     (ast-ls-def #'c-list-fdefs)
     (ast-ls-fbind nil)
@@ -292,6 +308,7 @@
          (cmt (get-env-var 'commit))
          (suf (get-env-var 'parser-suf))
          (pref (get-env-var 'parser-pref))
+         (antipref (get-env-var 'parser-antipref))
          (parser (get-env-var 'parser))
          )
     (parse-x-files-at-commit repo cmt :force force :suf suf
