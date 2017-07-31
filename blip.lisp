@@ -102,6 +102,9 @@
 (defun symbol-to-string (s)
   (string-downcase (symbol-name s)))
 
+(defun string-to-keyword (s)
+  (intern (string-upcase s) "KEYWORD"))
+
 (defun str-cat-2 (s1 s2)
   "Concatenates 2 strings"
   (concatenate 'string s1 s2))
@@ -317,12 +320,13 @@
           (path nil)
           (pov nil)
           (force nil)
-          (page nil))
+          (page nil)
+          (alt-idx-type nil))
      (setf path (car noun))
      (setf noun (cdr noun))
      (setf pov (str-to-pov (car noun)))
      (if pov (setf noun (cdr noun)))
-     (twice
+     (thrice
        (cond
          ((string= (car noun) "--page")
           (setf page (cadr noun))
@@ -330,6 +334,10 @@
           )
          ((string= (car noun) "--force")
           (setf force t)
+          (setf noun (cdr noun))
+          )
+         ((string= (car noun) "--type")
+          (setf alt-idx-type (string-to-keyword (cadr noun)))
           (setf noun (cdr noun))
           )
          ))
@@ -340,10 +348,11 @@
   `(let* ((noun nouns)
           (pov nil)
           (force nil)
-          (page nil))
+          (page nil)
+          (alt-idx-type nil))
      (setf pov (str-to-pov (car noun)))
      (if pov (setf noun (cdr noun)))
-     (twice
+     (thrice
        (cond
          ((string= (car noun) "--page")
           (setf page (cadr noun))
@@ -351,6 +360,10 @@
           )
          ((string= (car noun) "--force")
           (setf force t)
+          (setf noun (cdr noun))
+          )
+         ((string= (car noun) "--type")
+          (setf alt-idx-type (string-to-keyword (cadr noun)))
           (setf noun (cdr noun))
           )
          ))
@@ -419,20 +432,34 @@
        (format t "top-env ~%")
        (format t "pushenv $env-name ~%")
        (format t "popenv $env-name ~%")
-       (format t "index-build [--force] ~%")
-       (format t "index-prefix $path-prefix [up|down] [--page $pg-num] [--force] ~%")
-       (format t "index-suffix $path-suffix [up|down] [--page $pg-num] [--force] ~%")
-       (format t "index-get-subtree $path [up|down] [--page $pg-num] [--force] ~%")
+       (format t "index-build [--force] [--type $type] ~%")
+       (format t "index-prefix $path-prefix [up|down] [--page $pg-num] [--force] ~
+                  [--type $type] ~%")
+       (format t "index-suffix $path-suffix [up|down] [--page $pg-num] [--force] ~
+                  [--type $type] ~%")
+       (format t "index-get-subtree $path [up|down] [--page $pg-num] [--force] ~
+                  [--type $type] ~%")
        (format t "index-get-subtree-str $path [up|down] [--fmt $formatter] ~
-                  [--page $pg-num] [--force] ~%")
-       (format t "index-word-count $word [up|down] [--page $pg-num] [--force] ~%")
-       (format t "index-uniq [up|down] [--page $pg-num] [--force] ~%")
-       (format t "index-path-depth [up|down] [--page $pg-num] [--force] ~%")
+                  [--page $pg-num] [--force] [--type $type] ~%")
+       (format t "index-word-count $word [up|down] [--page $pg-num] [--force] ~
+                  [--type $type] ~%")
+       (format t "index-uniq [up|down] [--page $pg-num] [--force] ~
+                  [--type $type] ~%")
+       (format t "index-path-depth [up|down] [--page $pg-num] [--force] ~
+                  [--type $type] ~%")
        (format t "ast-ls-files ~%")
+       (format t "ast-ls-words [--count] [--pref $prefix] [--force] ~%")
        (format t "ast-ls-fdefs [--count] [--pref $prefix] [--force] ~%")
        (format t "ast-ls-fbinds [--count] [--pref $prefix] [--force] ~%")
        (format t "ast-ls-fcalls [--count] [--pref $prefix] [--force]  ~%")
        (format t "ast-parse [--force]  ~%")
+       (format t "ast-dump-file $file ~%")
+       (format t "requires-what $filename [--force]")
+       (format t "what-requires $filename [--force]")
+       (format t "bottom-deps [--force]")
+       (format t "top-deps [--force]")
+       (format t "exports-what $filename")
+       (format t "what-exports $funcname")
        (format t "reconstruct-repo ~%")
        (format t "github-users ~%")
        (format t "github-user-add $username ~%")
@@ -480,39 +507,47 @@
        )
       ((is-cmd-verb "index-prefix")
        (load-top-env)
-       (in-index-path-cli (print-ln (index-prefix path pov :page page :force force)))
+       (in-index-path-cli (print-ln (index-prefix path pov :page page :force force
+                                                  :alt-idx-type alt-idx-type)))
        )
       ((is-cmd-verb "index-suffix")
        (load-top-env)
-       (in-index-path-cli (print-ln (index-suffix path pov :page page :force force)))
+       (in-index-path-cli (print-ln (index-suffix path pov :page page :force force
+                                                  :alt-idx-type alt-idx-type)))
        )
       ((is-cmd-verb "index-word-count")
        (load-top-env)
-       (in-index-path-cli (print-ln (index-word-count path pov :page page :force force)))
+       (in-index-path-cli (print-ln (index-word-count path pov :page page :force force
+                                                      :alt-idx-type alt-idx-type)))
        )
       ((is-cmd-verb "index-uniq")
        (load-top-env)
-       (in-index-nopath-cli (print-ln (index-uniq pov :page page :force force)))
+       (in-index-nopath-cli (print-ln (index-uniq pov :page page :force force
+                                                  :alt-idx-type alt-idx-type)))
        )
       ((is-cmd-verb "index-path-depth")
        (load-top-env)
-       (in-index-nopath-cli (print-ln (index-path-depth pov :page page :force force)))
+       (in-index-nopath-cli (print-ln (index-path-depth pov :page page :force force
+                                                        :alt-idx-type alt-idx-type)))
        )
       ((is-cmd-verb "index-print")
        (load-top-env)
-       (in-index-nopath-cli (print-ln (index-print pov :page page :force force)))
+       (in-index-nopath-cli (print-ln (index-print pov :page page :force force
+                                                       :alt-idx-type alt-idx-type)))
        )
       ((is-cmd-verb "index-build")
        (load-top-env)
-       (index-build :force (and (car nouns) (string= "--force" (car nouns))))
+       (in-index-nopath-cli (index-build :force force :alt-idx-type alt-idx-type))
        )
       ((is-cmd-verb "index-get-subtree")
        (load-top-env)
-       (in-index-path-cli (print-ln (index-get-subtree path pov :page page :force force)))
+       (in-index-path-cli (print-ln (index-get-subtree path pov :page page :force force
+                                                       :alt-idx-type alt-idx-type)))
        )
       ((is-cmd-verb "index-get-subtree-str")
        (load-top-env)
-       (in-index-path-cli (print-ln (index-get-subtree-str path pov :page page :force force)))
+       (in-index-path-cli (print-ln (index-get-subtree-str path pov :page page :force force
+                                                           :alt-idx-type alt-idx-type)))
        )
       ((is-cmd-verb "ast-ls-files")
        (load-top-env)
@@ -539,6 +574,41 @@
       ((is-cmd-verb "ast-parse")
        (load-top-env)
        (ast-parse (and (car nouns)))
+       )
+      ((is-cmd-verb "ast-dump-file")
+       (load-top-env)
+       (print-ln
+        (char-ls-to-str
+         (flatten
+           (load-ast (get-env-var 'repo) (car nouns) (get-env-var 'commit)))))
+       )
+      ((is-cmd-verb "what-requires")
+       (load-top-env)
+       (print-ln (ast-what-requires (car nouns) :force (cadr nouns)))
+       )
+      ((is-cmd-verb "requires-what")
+       (load-top-env)
+       (print-ln (ast-requires-what (car nouns) :force (cadr nouns)))
+       )
+      ((is-cmd-verb "bottom-deps")
+       (load-top-env)
+       (print-ln (ast-bottom-deps :force (car nouns)))
+       )
+      ((is-cmd-verb "top-deps")
+       (load-top-env)
+       (print-ln (ast-top-deps :force (car nouns)))
+       )
+      ((is-cmd-verb "requires-what")
+       (load-top-env)
+       (print-ln (ast-requires-what (car nouns) :force (cadr nouns)))
+       )
+      ((is-cmd-verb "what-exports")
+       (load-top-env)
+       (print-ln (ast-what-exports (car nouns)))
+       )
+      ((is-cmd-verb "exports-what")
+       (load-top-env)
+       (print-ln (ast-exports-what (car nouns)))
        )
       ((is-cmd-verb "reconstruct-repo")
        (load-top-env)
@@ -691,6 +761,23 @@
         (setf (slot-value s 'list) (list e))
         (setf (slot-value s 'last) (slot-value s 'list)))))
 
+(defun stack-last-until (s test)
+  (let ((last (stack-last s))
+        (list (stack-list s)))
+    (if (funcall test last)
+        (return-from stack-last-until last)
+        )
+    (tagbody again
+       (setf list (popr list))
+       (setf last (car (last list)))
+       (if (or (not last) (funcall test last))
+           (return-from stack-last-until last)
+           )
+       (go again)
+       )
+    )
+  )
+
 (defun stack-last (s)
   (car (slot-value s 'last)))
 
@@ -825,15 +912,13 @@
        ((and (not head) (not tail))
         )
        ((and (listp head) tail)
-        (progn ;(print 2)
+        (progn
           (stack-pushr stack head)
           (advance-scanner)
           (go again)))
        ((and (listp head) (not tail))
-        ;(print 3)
         (stack-pushr stack head))
        ((is-white-space head)
-        ;(print 4)
         (let ((wsls '()))
           (tagbody
            wsagain
@@ -847,7 +932,6 @@
                    (go again))
              ))))
        ((and t)
-        ;(print 5)
         (progn
           (stack-pushr stack head)
           (advance-scanner)
@@ -1129,6 +1213,92 @@
      (stack-pushr stack ls)
      (go again)))
 
+(defun char-eq-any (char charls)
+  (apply #'fn-or
+         (map 'list #'(lambda (e) (CHAR= char e)) charls))
+   )
+
+(defun is-regex (stack)
+  "We need to check the preceding character to determine if we are (likely)
+   looking at a regex literal or instead of a division. If we are preceded by
+   any of the following, we assume we are looking at the start of a regex:
+        (,=:[!&|?{};
+
+   Clearly we can't handle regexes that are expressed as
+       `if (cond) return /rgx/g;`"
+  (let ((last-glyph (stack-last-until stack
+                                      #'(lambda (e)
+                                          (not (is-white-space e))))))
+    (char-eq-any last-glyph (str-to-char-ls "(,=:[!&|?{};"))
+    )
+  )
+
+(defun cmt-str-regex-aux (stack head tail)
+  (tagbody
+   again
+     (cond
+       ((and (not head) (not tail))
+        )
+       ((and head (not tail))
+        (stack-pushr stack head))
+       ((and (CHAR= head #\/) (CHAR= (car tail) #\*))
+        (let ((bcls '()))
+          (tagbody
+           bcmtagain
+             (cond
+               ((and (not (is-bcmt-end)) (not tail))
+                (pushr! bcls head)
+                (advance-scanner))
+               ((and (is-bcmt-end))
+                (pushr! bcls #\* #\/)
+                (advance-scanner 2))
+               ((not (is-bcmt-end))
+                (pushr! bcls head)
+                (advance-scanner)
+                (go bcmtagain))
+               )
+             (stack-pushr stack bcls)
+             (go again)
+             )
+        ))
+       ((and (CHAR= head #\/) (CHAR= (car tail) #\/))
+        (let ((lcls '()))
+          (tagbody
+           lcmtagain
+             (cond
+               ((and (not (is-lcmt-end)) (not tail))
+                (pushr! lcls head)
+                (advance-scanner))
+               ((and (is-lcmt-end))
+                (pushr! lcls #\Newline)
+                (advance-scanner))
+               ((not (is-lcmt-end))
+                (pushr! lcls head)
+                (advance-scanner)
+                (go lcmtagain))
+               )
+             (stack-pushr stack lcls)
+             (go again)
+             )
+        ))
+       ((CHAR= head #\")
+        (str-tagbody #\" dqagain)
+        )
+       ((CHAR= head #\')
+        (str-tagbody #\' sqagain)
+        )
+       ((and (CHAR= head #\/) (is-regex stack))
+        (str-tagbody #\/ rgxagain)
+        )
+       ((and t)
+        (stack-pushr stack head)
+        (advance-scanner)
+        (go again)
+        )
+       )
+     )
+  (stack-list stack)
+  )
 
 (defun cmt-str-aux (stack head tail)
   (tagbody
@@ -1237,6 +1407,9 @@
 
 (defun cmt-str (char-ls)
   (cmt-str-aux (make-instance 'stack) (car char-ls) (cdr char-ls)))
+
+(defun cmt-str-regex (char-ls)
+  (cmt-str-regex-aux (make-instance 'stack) (car char-ls) (cdr char-ls)))
 
 (defun cl-cmt-str (char-ls)
   (cl-cmt-str-aux (make-instance 'stack) (car char-ls) (cdr char-ls)))
@@ -1423,6 +1596,22 @@
   (and (is-punctuation-group ls)
        (equal (str-to-char-ls s) ls)))
 
+(defun match-any-puncs-ls (ss ls)
+  (let ((c ss))
+    (tagbody again
+       (cond
+         ((not c)
+          (return-from match-any-puncs-ls nil))
+         ((match-punc-ls (car c) ls)
+          (return-from match-any-puncs-ls t))
+         ((and t)
+          (setf c (cdr c))
+          (go again))
+         )
+       )
+    )
+  )
+
 (defun is-stmt-aux (ls count)
   (cond
     ((match-punc-ls ";" (car ls))
@@ -1435,6 +1624,20 @@
 
 (defun is-stmt (ls)
   (is-stmt-aux ls 0))
+
+(defun is-obj-lit-rval-aux (ls count)
+  (cond
+    ((or (and (characterp (car ls)) (CHAR= #\} (car ls)))
+         (match-punc-ls "," (car ls)))
+     count)
+    ((and ls)
+     (is-obj-lit-rval-aux (cdr ls) (+ count 1)))
+    ((and t)
+     nil)
+    ))
+
+(defun is-obj-lit-rval (ls)
+  (is-obj-lit-rval-aux ls 0))
 
 (defun is-stmt-group (ls)
   (match-punc-ls ";" (last ls)))
@@ -1498,6 +1701,10 @@
 
 (defun is-js-word-or-arr (ls)
   (or (is-js-arr ls) (is-word-group ls))
+  )
+
+(defun is-js-word-or-str (ls)
+  (or (is-str ls) (is-word-group ls))
   )
 
 (defun is-dot (ls)
@@ -1654,6 +1861,12 @@
        (or (is-js-fdef-binding ls)
            (is-js-var-binding ls))))
 
+(defun is-js-obj-lit-rec (ls)
+  (and ls (listp ls)
+       (or (is-word-group (car ls)) (is-str (car ls)))
+       (or (is-colon-group (cadr ls)) (is-eq-group (caddr ls)))
+       ))
+
 (defun is-js-fcall (ls)
   (and (listp ls)
        (not (is-js-fdef ls))
@@ -1680,6 +1893,12 @@
   (or (is-js-indexable-funcs ls)
       (is-js-any-ctl-stmt ls) (is-js-do-while-stmt ls)))
 
+(defun is-js-indexable-binds (ls)
+  (or (is-js-fdef-binding ls)
+      (is-js-var-binding ls) (is-js-obj-lit-rec ls)
+      (is-js-mbr-chain-word-bind ls) (is-js-fdef ls)
+      )
+  )
 
 
 (defmacro! def-5-state-match (fname test-slot-1 test-slot-2-opt test-slot-2
@@ -1986,7 +2205,7 @@
 (defun finite-match (ls match-fns)
   (finite-match-aux (car ls) (cdr ls) match-fns 0))
 
-(defun finite-repeating-match (ls rmatch-fns ematch-fns)
+(defun finite-repeating-match (ls rmatch-fns ematch-fns &optional zero_plus)
   "Just like finite-match, except we match rmatch-fns in a loop, until it
   returns nil. We then run ematch-fns on the part that rmatch failed to match.
   If rmatch succeeds, this function returns t, otherwise nil"
@@ -2005,7 +2224,7 @@
           (go again))
          ((not current_rsize)
           (setf current_esize (finite-match curls ematch-fns))
-          (if (or (not current_esize) (= rmatched 0))
+          (if (or (not current_esize) (and (= rmatched 0) (not zero_plus)))
               (setf total_size nil)
               (incf total_size current_esize)
               )))
@@ -2187,7 +2406,7 @@
 
 (defmacro! js-uber-aux-impl (self-parent self matcher grouper &key fcall fdef fdef-bind
                                          curly-ctl do-while flat-ctl arr nestable
-                                         var-bind)
+                                         var-bind obj-lit-rec mbr-chain)
   `(defun ,self (acc head tail)
      (let ((sz (,matcher head tail)))
        (pipeline-until nil
@@ -2201,6 +2420,8 @@
                       (pipeline-until-lambda (is-js-curly-ctl-stmt head) ,curly-ctl)
                       (pipeline-until-lambda (is-js-do-while-stmt head) ,do-while)
                       (pipeline-until-lambda (is-js-flat-ctl-stmt head) ,flat-ctl)
+                      (pipeline-until-lambda (is-js-mbr-chain head) ,mbr-chain)
+                      (pipeline-until-lambda (is-js-obj-lit-rec head) ,obj-lit-rec)
                       (pipeline-until-lambda (is-nestable head) ,nestable)
                       (pipeline-until-lambda (or (and (characterp head) tail) tail)
                                             (,self (pushr acc head) (car tail) (cdr tail)))
@@ -2246,13 +2467,33 @@
                   :nestable (descend-and-continue js-mbr-chain
                                                   js-mbr-chain-aux))
 
+(js-uber-aux-impl js-obj-lit-recs js-obj-lit-recs-aux js-obj-lit-recp
+                  group-js-obj-lit-rec
+                  :fdef-bind (descend-and-continue js-obj-lit-recs js-obj-lit-recs-aux)
+                  :var-bind (descend-and-continue js-obj-lit-recs js-obj-lit-recs-aux)
+                  :mbr-chain (descend-and-continue js-obj-lit-recs js-obj-lit-recs-aux)
+                  :fdef (xform-and-continue js-obj-lit-recs-aux xform-js-fdef-cgroup
+                                            js-obj-lit-recs)
+                  :fcall (xform-and-continue js-obj-lit-recs-aux xform-fcall-pgroup
+                                             js-obj-lit-recs)
+                  :nestable (descend-and-continue js-obj-lit-recs
+                                                  js-obj-lit-recs-aux))
+
 (js-uber-aux-impl js-curly-ctl-stmts js-curly-ctl-stmts-aux js-curly-ctl-stmtp
                   group-js-curly-ctl-stmt
                   :fdef (xform-and-continue js-curly-ctl-stmts-aux xform-js-fdef-cgroup
                                       js-curly-ctl-stmts)
                   :fcall (xform-and-continue js-curly-ctl-stmts-aux
                           xform-fcall-pgroup js-curly-ctl-stmts)
-                  :nestable (js-curly-ctl-stmts-aux (pushr acc head) (car tail) (cdr tail)))
+                  :mbr-chain (descend-and-continue js-curly-ctl-stmts
+                                                   js-curly-ctl-stmts-aux)
+                  :var-bind (descend-and-continue js-curly-ctl-stmts
+                                                  js-curly-ctl-stmts-aux)
+                  :obj-lit-rec (descend-and-continue js-curly-ctl-stmts
+                                                     js-curly-ctl-stmts-aux)
+                  ;:nestable (js-curly-ctl-stmts-aux (pushr acc head) (car tail) (cdr tail))
+                  :nestable (descend-and-continue js-curly-ctl-stmts js-curly-ctl-stmts-aux)
+                  )
 
 (js-uber-aux-impl js-do-while-stmts js-do-while-stmts-aux js-do-while-stmtp
                   group-js-do-while-stmt
@@ -2260,9 +2501,13 @@
                                       js-do-while-stmts)
                   :fcall (xform-and-continue js-do-while-stmts-aux
                           xform-fcall-pgroup js-do-while-stmts)
+                  :obj-lit-rec (descend-and-continue js-do-while-stmts
+                                                     js-do-while-stmts-aux)
                   :curly-ctl (xform-and-continue js-do-while-stmts-aux
                           xform-js-curly-ctl-stmt-cgroup js-do-while-stmts)
-                  :nestable (js-do-while-stmts-aux (pushr acc head) (car tail) (cdr tail)))
+                  ;:nestable (js-do-while-stmts-aux (pushr acc head) (car tail) (cdr tail))
+                  :nestable (descend-and-continue js-do-while-stmts js-do-while-stmts-aux)
+                  )
 
 (js-uber-aux-impl js-flat-ctl-stmts js-flat-ctl-stmts-aux js-flat-ctl-stmtp
                   group-js-flat-ctl-stmt
@@ -2270,11 +2515,15 @@
                                             js-flat-ctl-stmts)
                   :fcall (xform-and-continue js-flat-ctl-stmts-aux xform-fcall-pgroup
                                              js-flat-ctl-stmts)
+                  :obj-lit-rec (descend-and-continue js-flat-ctl-stmts
+                                                     js-flat-ctl-stmts-aux)
                   :curly-ctl (xform-and-continue js-flat-ctl-stmts-aux
                                                  xform-js-curly-ctl-stmt-cgroup
                                                  js-flat-ctl-stmts)
                   :do-while (xform-and-continue js-flat-ctl-stmts-aux xform-js-do-while-cgroup
-                                                js-flat-ctl-stmts))
+                                                js-flat-ctl-stmts)
+                  )
+
 
 ; Function def: 'function' name pgroup cgroup [name != if | for | while]
 (defun js-fdefs (ls)
@@ -2318,14 +2567,51 @@
        (list
         (list :m #'is-word-arr-fcall-vbind-fbind))))
 
+(defun is-js-mbr-chain (ls)
+  (and ls (listp ls) (js-mbr-chainp (car ls) (cdr ls))))
+
+(defun is-js-mbr-chain-word-bind (ls)
+  "Detects mbr-chains that contain words and end in a binding"
+  (let ((fail nil))
+    (if (and (is-js-mbr-chain ls) (is-js-binding (car (last ls))))
+        (map 'nil #'(lambda (e)
+                      (if (not (or (is-blank-group e)
+                                   (is-punctuation-group e)
+                                   (is-word-group e)
+                                   (is-js-binding e))
+                               )
+                          (setf fail t))
+                      (if (and (is-js-binding e) (is-js-arr (car e)))
+                          (setf fail t))
+                      )
+             ls)
+        (setf fail t)
+        )
+    (not fail)
+    )
+  )
+
+;;; Basically anything until '}' or ','
+(defun js-obj-lit-recp (head tail)
+  (finite-match (cons head tail)
+                (list
+                 (list :m #'is-js-word-or-str)
+                 (list :o #'is-blank-group)
+                 (list :m #'is-colon-group)
+                 (list :o #'is-blank-group)
+                 (list :mc #'is-obj-lit-rval)
+                 )
+                )
+  )
+
 (defun js-var-bindings (ls)
   (js-var-bindings-aux '() (car ls) (cdr ls)))
 
 (defun js-mbr-chain (ls)
   (js-mbr-chain-aux '() (car ls) (cdr ls)))
 
-(defun js-obj-lit (ls)
-  (js-obj-lit-aux '() (car ls) (cdr ls)))
+(defun js-obj-lit-recs (ls)
+  (js-obj-lit-recs-aux '() (car ls) (cdr ls)))
 
 
 (defun group-js-curly-ctl-stmt (head tail size)
@@ -2352,6 +2638,20 @@
                      (is-js-var-binding x) (is-js-arr x)
                      )
                  (js-mbr-chain x)
+                 x))
+         (head-n (cons head tail) size))
+        (car (popl-n tail (- size 1)))
+        (popl-n tail size)))
+
+(defun group-js-obj-lit-rec (head tail size)
+  (list (map
+         'list
+         #'(lambda (x)
+             (if (or (is-js-fdef-binding x) (is-js-fcall x)
+                     (is-js-var-binding x) (is-js-arr x)
+                     (is-js-mbr-chain x)
+                     )
+                 (js-obj-lit-recs x)
                  x))
          (head-n (cons head tail) size))
         (car (popl-n tail (- size 1)))
@@ -2570,6 +2870,14 @@
 
 (defun get-js-fbind-name (ls)
   (assert (is-js-fdef-binding ls))
+  (car ls))
+
+(defun get-js-vbind-name (ls)
+  (assert (is-js-var-binding ls))
+  (car ls))
+
+(defun get-js-obj-key (ls)
+  (assert (is-js-obj-lit-rec ls))
   (car ls))
 
 (defun get-fcall-params (ls)
@@ -2810,6 +3118,24 @@
      (concatenate 'list (get-c-fdef-name ls) "{}"))
     ))
 
+(defun get-js-mbr-nested-words (ls)
+  (let ((words '()))
+    (map 'nil #'(lambda (e)
+                  (cond
+                    ((is-word-group e)
+                     ;(if (> 0 (length words))
+                         ;(pushr! words '(#\.))
+                         ;)
+                     (pushr! words e)
+                     )
+                    )
+                  )
+         ls
+         )
+    (flatten (intersperse words '(#\/) t))
+    )
+  )
+
 (defun js-name-to-pathname (ls)
   (cond
     ((is-js-flat-ctl-stmt ls)
@@ -2824,6 +3150,12 @@
      (concatenate 'list (get-js-fdef-name ls) "{}"))
     ((is-js-fdef-binding ls)
      (concatenate 'list (get-js-fbind-name ls) "="))
+    ((is-js-var-binding ls)
+     (concatenate 'list (get-js-vbind-name ls) "="))
+    ((is-js-obj-lit-rec ls)
+     (concatenate 'list (get-js-obj-key ls) ":"))
+    ((is-js-mbr-chain-word-bind ls)
+     (get-js-mbr-nested-words ls))
     ((and t)
      (assert nil))))
 
@@ -2928,6 +3260,8 @@
        (setf idx-bool #'is-js-indexable-funcs))
       ((equal type :funcs-conds)
        (setf idx-bool #'is-js-indexable-conds))
+      ((equal type :binds)
+       (setf idx-bool #'is-js-indexable-binds))
       )
     idx-bool
     )
@@ -3261,7 +3595,9 @@
     (map 'list #'(lambda (e) (str-split "/" e)) args)))
 
 (defun pathname-to-string (p)
-  (char-ls-to-str p))
+  "Note that the 'flatten' is in there because some bindings, (such as binding
+   to an array) contain lists at the toplevel instead of characters"
+  (char-ls-to-str (flatten p)))
 
 (defun inter-aux (c ls e nl)
   (cond ((or (and ls (not nl)) (and ls nl (cdr ls)))
@@ -3376,7 +3712,6 @@
 
 (defun auto-walk-tree (tree walk)
   (auto-walk-tree-aux tree walk)
-  ;walk
   )
 
 (defun get-path-subtree (path index &optional pov)
@@ -3386,10 +3721,13 @@
         (setf pairs (path-index-revstr index)))
     (list (path-index-file index) (remove nil
             (map 'list
-                 #'(lambda (p) (if
-                                (match-path path (fmt-path (car p)))
-                                (auto-walk-tree (path-index-ast index)
-                                                (unfold-list (cadr p)))))
+                 #'(lambda (p)
+                     (cond
+                       ((string= path "/")
+                        (path-index-ast index))
+                       ((match-path path (fmt-path (car p)))
+                        (auto-walk-tree (path-index-ast index)
+                                        (unfold-list (cadr p))))))
                  pairs))))
   )
 
@@ -3574,7 +3912,7 @@
        (values (gen-ws 1) n (gen-nl-ws (* 4 depth))))
       ((and (characterp n) (CHAR= #\{ n)
             (and (characterp (car rest)) (CHAR= #\})))
-       (print (last s))
+       ;(print (last s))
        (values (gen-ws 1) n (gen-nl-ws (* 4 (- depth 1)))))
       ((and (characterp n) (CHAR= #\} n))
        (values (gen-nl-ws (* 4 (- depth 1))) n (gen-nl-ws (* 4 (- depth 1)))))
@@ -3588,7 +3926,12 @@
             (or (match-punc-ls "," prev)
                 (is-word-group prev)))
        (values (gen-ws 1) n))
-      ((match-punc-ls "=" n)
+      ((match-punc-ls "," n)
+       (values n (gen-ws 1)))
+      ((or (match-any-puncs-ls '("+" "-" "*" "/" "||"
+                                 "<<" ">>" ">" "<" ">="
+                                 "<=" "==" "===" "!="
+                                 "!=="  "&&" "=") n))
        (values (gen-ws 1) n (gen-ws 1)))
       ((and (> depth 0) (is-js-fdef n))
        (values (gen-nl-ws (* 4 depth))
@@ -3632,7 +3975,7 @@
        (values (gen-ws 1) n (gen-nl-ws (* 4 depth))))
       ((and (characterp n) (CHAR= #\{ n)
             (and (characterp (car rest)) (CHAR= #\})))
-       (print (last s))
+       ;(print (last s))
        (values (gen-ws 1) n (gen-nl-ws (* 4 (- depth 1)))))
       ((and (characterp n) (CHAR= #\} n))
        (values (gen-nl-ws (* 4 (- depth 1))) n (gen-nl-ws (* 4 (- depth 1)))))
@@ -3870,7 +4213,7 @@
   )
 
 (defun js-to-ast (input)
-  (pipeline input #'cmt-str #'white-space
+  (pipeline input #'cmt-str-regex #'white-space
             #'blanks #'words #'punctuations
             #'nestables
             #'js-fdefs
@@ -3878,7 +4221,7 @@
             #'js-arrs
             #'js-var-bindings
             #'js-mbr-chain
-            ;#'js-obj-lit
+            #'js-obj-lit-recs
             #'js-vars
             #'js-curly-ctl-stmts
             #'js-do-while-stmts
@@ -3898,9 +4241,12 @@
         (in4 "if (x) { (10 * 10); }")
         (in5 "if (z) {do { if (a) do { (10 * 10) } while (y); } while (x);}")
         (in6 "if (x) { if (z) while (y) { (10 * 10); };}")
+        (in7 "function (a) { return {a: function () { if (a) { return a.b.c } } }}")
+        (in8 "a.b.c = {a: function () { if (a) { return a.b.c } } };")
+        (in9 "{a: b, c: d}")
         )
   (js-to-ast
-   (str-to-char-ls in6))))
+   (str-to-char-ls in9))))
 
 (defun test-varbind-parse ()
   (let ((in1 "if (x) { function foo (a, b) {var mvar = 2 + 2 + call(); for (mvar = 0; true; mvar++) { print('heeeeeeey'); }}; bar(); foo(); x = 4.2; }")
@@ -3912,9 +4258,10 @@
 (defun test-mbrchain-parse ()
   (let ((in2 "if (a, b) {call().a.b.c; var func = function foo (a, b) {hello.fn = function (a) {b.mycall().mymbr = {a: b, b: c, c: d.e, e: f};};};}")
         (in3 "function (a) {a.b[10].c[10] = function (a) {myCall(); function () {a.b.c}; return a = a.b.call(function () {a.b.c});};}")
-        (in4 "a.b.c = q.w.e;"))
+        (in4 "a. b .c = q.w.e;"))
     (js-to-ast
-     (str-to-char-ls in3))))
+     (str-to-char-ls in4))))
+
 
 ;;; TODO implement this
 (defun c-pre-proc (ls)
@@ -4227,8 +4574,8 @@
   (git-cmd-svc-user "clone" "gerrit" "joyent" remote))
 
 (defun gerrit-pull-joyent (user-repo)
-  (if (file-exists-p (str-cat blip-repos svc "/" user-repo "/"))
-      (git-cmd-user "pull" "gerrit" user-repo)))
+  (if (file-exists-p (str-cat blip-repos "gerrit" "/" user-repo "/"))
+      (git-cmd-svc-user "pull" "gerrit" user-repo)))
 
 (defun gerrit-clone-joyent-all% ()
   (map 'list #'gerrit-clone-joyent
@@ -4810,9 +5157,9 @@
          (fstr (str-cat str (car ls) ".js"))
          (lfstr (str-cat str (car ls)))
          (istr (str-cat str (car ls) "/index.js"))
-         (exists (member lfstr files))
-         (fexists (member fstr files))
-         (iexists (member istr files)) )
+         (exists (member lfstr files :test #'equal))
+         (fexists (member fstr files :test #'equal))
+         (iexists (member istr files :test #'equal)))
     (cond
       ((and ls (cdr ls))
        (js-path-cat-aux dstr (cdr ls) files))
@@ -4847,9 +5194,7 @@
           c)
         )))
 
-(defun js-file-deps (repo file commit &optional files)
-  (if (not files)
-      (setf files (files-present-at-commit repo commit)))
+(defun js-file-deps (repo file commit files)
   (let* ((ast (load-ast repo file commit))
          (reqs (get-require-arg0 ast))
          (exp-reqs (map 'list #'(lambda (r) (expand-path file r :when-module nil)) reqs))
@@ -4859,19 +5204,17 @@
                           (list (car e) (js-path-cat (cadr e) files))) raw)))
     pretty))
 
-(defun js-all-file-deps (repo commit)
+(defun js-all-file-deps (repo commit files)
   (expand-commit! repo commit)
-  (let* ((files (files-present-at-commit repo commit))
-         (deps '()))
-    (map 'nil #'(lambda (f) (pushr! deps (js-file-deps repo f commit))) files)
+  (let* ((deps '()))
+    (map 'nil #'(lambda (f) (pushr! deps (js-file-deps repo f commit files))) files)
     (reduce #'append (remove-if #'not deps)))
   )
 
-(defun js-cache-file-deps (repo commit &optional dep-table)
+(defun js-cache-file-deps (repo commit files)
   (expand-commit! repo commit)
-  (if (not dep-table)
-      (setf dep-table (js-all-file-deps repo commit)))
-  (let ((dir (str-cat blip-repo-meta repo "/deps")))
+  (let ((dir (str-cat blip-repo-meta repo "/deps"))
+        (dep-table (js-all-file-deps repo commit files)))
     (mkdir dir)
     (pushdir dir)
     (form-to-file dep-table (str-cat dir "/" commit))
@@ -4885,25 +5228,27 @@
     (file-to-form file)
   ))
 
-(defun js-fdeps (repo commit)
+(defun js-fdeps (repo commit files &optional force)
   (expand-commit! repo commit)
-  (let ((deps (js-load-file-deps repo commit)))
+  (let ((deps (if (and force) nil (js-load-file-deps repo commit))))
     (cond
       ((not deps)
-       (js-cache-file-deps repo commit)
+       (js-cache-file-deps repo commit files)
        (setf deps (js-load-file-deps repo commit))
        ))
     deps))
 
 
-(defun what-requires (dep table)
-  (let ((ret '()))
+(defun js-what-requires (repo commit dep files &optional force)
+  (let ((ret '())
+        (table (js-fdeps repo commit files force)))
     (map 'nil #'(lambda (x) (if (equal dep (cadr x)) (pushr! ret (car x)))) table)
     ret)
   )
 
-(defun requires-what (dep table)
-  (let ((ret '()))
+(defun js-requires-what (repo commit dep files &optional force)
+  (let ((ret '())
+        (table (js-fdeps repo commit files force)))
     (map 'nil #'(lambda (x) (if (equal dep (car x)) (pushr! ret (cadr x)))) table)
     ret)
   )
@@ -4911,18 +5256,25 @@
 (defun get-column (list n)
   (remove-duplicates (map 'list #'(lambda (e) (car (popl-n e n))) list) :test #'equal))
 
-(defun top-deps (table)
-  (let* ((left (get-column table 0))
+(defun js-top-deps (repo commit files &optional force)
+  (let* ((table (js-fdeps repo commit files force))
+         (left (get-column table 0))
          (right (get-column table 1))
          (left-only '()))
-    (map 'nil #'(lambda (e) (if (not (member e right :test #'equal)) (pushr! left-only e))) left)
+    (map 'nil #'(lambda (e)
+                  (if (not (member e right :test #'equal))
+                      (pushr! left-only e)))
+         left)
     left-only))
 
-(defun bottom-deps (table)
-  (let* ((left (get-column table 0))
+(defun js-bottom-deps (repo commit files &optional force)
+  (let* ((table (js-fdeps repo commit files force))
+         (left (get-column table 0))
          (right (get-column table 1))
          (right-only '()))
-    (map 'nil #'(lambda (e) (if (not (member e left :test #'equal)) (pushr! right-only e))) right)
+    (map 'nil #'(lambda (e)
+                  (if (not (member e left :test #'equal))
+                      (pushr! right-only e))) right)
     right-only))
 
 (defun remove-dep (table dep side)

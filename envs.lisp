@@ -82,7 +82,13 @@
    (ast-ls-call :initarg :ast-ls-call)
    (ast-ls-def :initarg :ast-ls-def)
    (ast-ls-fbind :initarg :ast-ls-fbind)
-   (ast-ls-word :initarg :ast-ls-word))
+   (ast-ls-word :initarg :ast-ls-word)
+   (what-requires :initarg :what-requires)
+   (requires-what :initarg :requires-what)
+   (bottom-deps :initarg :bottom-deps)
+   (top-deps :initarg :top-deps)
+   (what-exports :initarg :what-exports)
+   (exports-what :initarg :exports-what))
    )
 
 (defun env-ls ()
@@ -94,14 +100,19 @@
 (defmacro! new-env%% (name repo commit indexer idx-type idx-type-conv
                            files pagesz ast-fmt parser parser-suf parser-pref
                            parser-antipref
-                           ast-ls-call ast-ls-def ast-ls-fbind ast-ls-word)
+                           ast-ls-call ast-ls-def ast-ls-fbind ast-ls-word
+                           what-requires requires-what bottom-deps top-deps
+                           what-exports exports-what)
   `(let ((tmp (make-instance 'env :repo ,repo :name ',name :commit ,commit
                   :indexer ,indexer :idx-type ,idx-type :idx-type-conv
                   ,idx-type-conv :files ,files :pagesz ,pagesz :ast-fmt ,ast-fmt
                   :parser ,parser :parser-suf ,parser-suf :parser-pref
                   ,parser-pref :parser-antipref ,parser-antipref :ast-ls-call
                   ,ast-ls-call :ast-ls-def ,ast-ls-def
-                  :ast-ls-fbind ,ast-ls-fbind :ast-ls-word ,ast-ls-word)))
+                  :ast-ls-fbind ,ast-ls-fbind :ast-ls-word ,ast-ls-word
+                  :what-requires ,what-requires :requires-what ,requires-what
+                  :bottom-deps ,bottom-deps :top-deps ,top-deps
+                  :what-exports ,what-exports :exports-what ,exports-what)))
     (pushr! env-avail ',name)
     (pushr! env-pool tmp)
     ;(setf ,name tmp)
@@ -116,7 +127,8 @@
                  ;parser-suf parser-pref ast-ls-call ast-ls-def))
      (new-env%% ,name repo commit indexer idx-type idx-type-conv files pagesz
                 ast-fmt parser parser-suf parser-pref parser-antipref ast-ls-call
-                ast-ls-def ast-ls-fbind ast-ls-word)
+                ast-ls-def ast-ls-fbind ast-ls-word what-requires requires-what
+                bottom-deps top-deps what-exports exports-what)
     )
   )
 
@@ -139,28 +151,40 @@
      (ast-ls-def #'js-list-fdefs)
      (ast-ls-fbind #'js-list-fbinds)
      (ast-ls-word #'js-list-words)
+     (requires-what #'js-requires-what)
+     (what-requires #'js-what-requires)
+     (bottom-deps #'js-bottom-deps)
+     (top-deps #'js-top-deps)
+     (exports-what nil)
+     (what-exports nil)
      )
   )
 
 (defmacro! new-c-env (name repo-nm commit &optional pref antipref depth)
   `(new-env ,name
-    ;(name ',name)
-    (repo ,repo-nm)
-    (commit (expand-commit ,repo-nm ,commit))
-    (indexer #'index-all-c-paths)
-    (idx-type :funcs)
-    (idx-type-conv #'c-idx-type-to-test)
-    (files (all-files repo commit ".c" ,pref ,antipref ,depth))
-    (pagesz 70)
-    (ast-fmt #'(lambda (a) (c-ast-fmt nil a :simtupid)))
-    (parser #'c-to-ast)
-    (parser-suf ".c")
-    (parser-pref ,pref)
-    (parser-antipref ,antipref)
-    (ast-ls-call #'c-list-fcalls)
-    (ast-ls-def #'c-list-fdefs)
-    (ast-ls-fbind nil)
-    (ast-ls-word #'c-list-words)
+     ;(name ',name)
+     (repo ,repo-nm)
+     (commit (expand-commit ,repo-nm ,commit))
+     (indexer #'index-all-c-paths)
+     (idx-type :funcs)
+     (idx-type-conv #'c-idx-type-to-test)
+     (files (all-files repo commit ".c" ,pref ,antipref ,depth))
+     (pagesz 70)
+     (ast-fmt #'(lambda (a) (c-ast-fmt nil a :simtupid)))
+     (parser #'c-to-ast)
+     (parser-suf ".c")
+     (parser-pref ,pref)
+     (parser-antipref ,antipref)
+     (ast-ls-call #'c-list-fcalls)
+     (ast-ls-def #'c-list-fdefs)
+     (ast-ls-fbind nil)
+     (ast-ls-word #'c-list-words)
+     (requires-what nil)
+     (what-requires nil)
+     (bottom-deps nil)
+     (top-deps nil)
+     (exports-what nil)
+     (what-exports nil)
     )
   )
 
@@ -184,14 +208,14 @@
     )
   )
 
-(defmacro! in-index-env (force page &body body)
+(defmacro! in-index-env (force page alt-idx-type &body body)
   `(let* ((repo (get-env-var 'repo))
           (files (get-env-var 'files))
           (cmt (get-env-var 'commit))
           (pgsz (get-env-var 'pagesz))
-          (indexer (get-env-var 'indexer))
           (ast-fmt (get-env-var 'ast-fmt))
-          (idx-type (get-env-var 'idx-type))
+          (idx-type (if (and ,alt-idx-type) ,alt-idx-type (get-env-var 'idx-type)))
+          (indexer (get-env-var 'indexer))
           (idx-type-conv (get-env-var 'idx-type-conv))
           (indices (map 'list
                         #'(lambda (f)
@@ -199,12 +223,14 @@
                              (load-ast repo f cmt)
                              #'(lambda (ast) (path-index-setroot
                                               (funcall indexer repo f cmt idx-type ast
-                                                       :force force)))
+                                                       :force ,force)))
                              #'(lambda (ix)
                                  (list f ix)))
                                 )
                         (get-nth-page files ,page pgsz))))
-      ,@body))
+     ,@body
+     )
+  )
 
 (defmacro! in-ls-env (&body body)
   `(let* ((repo (get-env-var 'repo))
@@ -217,14 +243,27 @@
           )
      ,@body))
 
-(defun index-print (&optional pov &key page force)
-  (in-index-env force (if (and page) page 0)
+(defmacro! in-req-env (&body body)
+  `(let* ((repo (get-env-var 'repo))
+          (files (get-env-var 'files))
+          (cmt (get-env-var 'commit))
+          (requires-what (get-env-var 'requires-what))
+          (what-requires (get-env-var 'what-requires))
+          (top-deps (get-env-var 'top-deps))
+          (bottom-deps (get-env-var 'bottom-deps))
+          (what-exports (get-env-var 'what-exports))
+          (exports-what (get-env-var 'exports-what))
+          )
+     ,@body))
+
+(defun index-print (&optional pov &key page force alt-idx-type)
+  (in-index-env force (if (and page) page 0) alt-idx-type
     (map 'list #'(lambda (ix) (print-js-paths ix pov)) indices)))
 
-(defun index-build (&key force)
+(defun index-build (&key force alt-idx-type)
   (iter:iter
     (iter:for i from 0 to (- (get-env-npages) 1))
-     (index-print :down :force force :page i)
+     (index-print :down :force force :page i :alt-idx-type alt-idx-type)
     )
   t)
 
@@ -332,9 +371,9 @@
   ;(map 'list #'(lambda (e) (ast-to-str (cdr e))) (get-path-subtree path index pov)))
   (get-path-subtree path index pov))
 
-(defun index-get-subtree-str (path &optional pov &key page force)
+(defun index-get-subtree-str (path &optional pov &key page force alt-idx-type)
   (pre-filter-files path
-    (in-index-env force (if (and page) page 0)
+    (in-index-env force (if (and page) page 0) alt-idx-type
       (remove-if #'(lambda (x) (equal (cadr x) ""))
                  (map 'list #'(lambda (ix)
                                 (list (car ix)
@@ -348,8 +387,37 @@
              (index-get-subtree-impl ix path pov))
          indices))))))
 
+(defun split-ix-path (path)
+  (str-split "/|{|}|\\(|\\)|=|:" path))
+
+(defun get-mod-exp-key (ls)
+  (assert (listp ls))
+  (let ((key nil))
+    (cond
+      ((and (string= "module" (car ls)) (string= "exports" (cadr ls)))
+       (setf key (caddr ls)))
+      ((and (string= "exports" (car ls)))
+       (setf key (cadr ls)))
+      )
+    )
+  )
+
+(defun remove-empty-strs (ls)
+  (remove-if #'(lambda (s) (string= s "")) ls))
+
+(defun ix-get-mod-exp-key (ix)
+  (map 'list #'(lambda (p) (list (car p)
+                                 (remove nil
+                                         (map 'list #'get-mod-exp-key
+                                              (map 'list #'remove-empty-strs
+                                                      (map 'list #'split-ix-path
+                                                           (cadr p))))))) ix)
+  )
+
 (defmacro! pre-filter-files (pref &body body)
-  `(let ((spref (str-split "/|{|}|\\(|\\)|=" ,pref))
+  `(let ((spref (if (listp ,pref)
+                    (map 'list #'split-ix-path ,pref)
+                    (split-ix-path ,pref)))
          (f1 '())
          (f2 '())
          (f3 '())
@@ -357,30 +425,41 @@
          (rpref ,pref)
          (orig-files (ast-ls-files))
          (res nil))
-         (setf rpref (car spref))
+
+     (setf rpref (if (listp ,pref)
+                     (map 'list #'car spref)
+                     (car spref)))
      ;;; XXX Given that f4 is a superset of f1,2,3 we might want to get rid of
      ;;; those.
      ;(setf f1 (ast-extract-files (ast-ls-fcalls t :pref rpref)))
      ;(setf f2 (ast-extract-files (ast-ls-fdefs t :pref rpref)))
      ;(setf f3 (ast-extract-files (ast-ls-fbinds t :pref rpref)))
-     (setf f4 (ast-extract-files (ast-ls-words t :pref rpref)))
-     (set-env-files (remove-duplicates (append f1 f2 f3 f4) :test #'equal))
-     (setf res ,@body)
-     (set-env-files orig-files)
-     res
+     (cond
+       ((or (listp ,pref) (and (stringp ,pref) (not (string= ,pref "/"))))
+        (setf f4 (ast-extract-files (ast-ls-words t :pref rpref)))
+        (set-env-files (remove-duplicates (append f1 f2 f3 f4) :test #'equal))
+        (setf res ,@body)
+        (set-env-files orig-files)
+        res
+        )
+       ((and t)
+        (setf res ,@body)
+        res
+        )
+       )
      ))
 
-(defun index-get-subtree (path &optional pov &key page force)
+(defun index-get-subtree (path &optional pov &key page force alt-idx-type)
   (pre-filter-files path
-    (in-index-env force (if (and page) page 0)
+    (in-index-env force (if (and page) page 0)  alt-idx-type
       (map 'list
            #'(lambda (ix)
                (index-get-subtree-impl ix path pov))
            indices))))
 
-(defun index-prefix (pref &optional pov &key page force)
+(defun index-prefix (pref &optional pov &key page force alt-idx-type)
   (pre-filter-files pref
-    (in-index-env force (if (and page) page 0)
+    (in-index-env force (if (and page) page 0) alt-idx-type
       (remove nil
               (map 'list #'(lambda (i)
                              (get-path-with-prefix pref i pov))
@@ -390,8 +469,8 @@
     )
 
 ;;; TODO update this function to use pre-filtered files like index-prefix does.
-(defun index-suffix (suf &optional pov &key page force)
-  (in-index-env force (if (and page) page 0)
+(defun index-suffix (suf &optional pov &key page force alt-idx-type)
+  (in-index-env force (if (and page) page 0) alt-idx-type
     (remove nil
             (map 'list #'(lambda (i)
                            (get-path-with-suffix suf i pov))
@@ -399,9 +478,9 @@
             :key #'cadr)
     ))
 
-(defun index-word-count (word &optional pov &key zero pre page force)
+(defun index-word-count (word &optional pov &key zero pre page force alt-idx-type)
   (pre-filter-files word
-    (in-index-env force (if (and page) page 0)
+    (in-index-env force (if (and page) page 0) alt-idx-type
       (assert idx-type)
       (map 'list #'(lambda (i)
                      (get-path-node-count
@@ -412,8 +491,8 @@
                       pov :zero zero :pre pre))
            indices))))
 
-(defun index-line-count (&optional pov &key zero pre page force)
-  (in-index-env force (if (and page) page 0)
+(defun index-line-count (&optional pov &key zero pre page force alt-idx-type)
+  (in-index-env force (if (and page) page 0) alt-idx-type
     (map 'list #'(lambda (i)
                    (get-path-node-count
                     #'(lambda (n)
@@ -423,8 +502,8 @@
                     pov :zero zero :pre pre))
          indices)))
 
-(defun index-uniq (&optional pov &key page force)
-  (in-index-env force (if (and page) page 0)
+(defun index-uniq (&optional pov &key page force alt-idx-type)
+  (in-index-env force (if (and page) page 0) alt-idx-type
    (map 'list #'(lambda (i)
                   (uniq-path i
                              :pov pov
@@ -433,13 +512,67 @@
                              :sort-count t))
         indices)))
 
-(defun index-path-depth (&optional pov &key page force)
-  (in-index-env force (if (and page) page 0)
+(defun index-path-depth (&optional pov &key page force alt-idx-type)
+  (in-index-env force (if (and page) page 0) alt-idx-type
    (map 'list #'(lambda (i)
                   (paths-by-depth  i
                              :pov pov
                              :fmt t))
         indices)))
+
+(defun ast-file-deps (&key force)
+  )
+
+(defun ast-what-requires (dep &key force)
+  (in-req-env (if (and what-requires)
+                  (funcall what-requires repo cmt dep files force)
+                  "what-requires not supported in this env"))
+  )
+
+(defun ast-requires-what (dep &key force)
+  (in-req-env (if (and requires-what)
+                  (funcall requires-what repo cmt dep files force)
+                  "requires-what not supported in this env"))
+  )
+
+(defun ast-bottom-deps (&key force)
+  (in-req-env (if (and bottom-deps)
+                  (funcall bottom-deps repo cmt files force)
+                  "bottom-deps not supported in this env"))
+  )
+
+(defun ast-top-deps (&key force)
+  (in-req-env (if (and top-deps)
+                  (funcall top-deps repo cmt files force)
+                  "top-deps not supported in this env"))
+  )
+
+(defmacro! in-exp-env (&body body)
+  `(let* ((pref '("module/exports/" "module/exports=" "exports/" "exports=/"))
+          (ix (index-prefix pref :down :alt-idx-type :binds))
+          (keys (ix-get-mod-exp-key ix))
+          )
+    ,@body
+    )
+  )
+
+(defun ast-what-exports (func)
+  (in-exp-env
+    (map 'list #'car
+         (remove-if #'(lambda (p)
+                        (not (member func (cadr p) :test #'equal)))
+                    keys))
+    )
+  )
+
+(defun ast-exports-what (file)
+  (in-exp-env
+    (car (map 'list #'cadr
+         (remove-if #'(lambda (p)
+                        (not (string= file (car p))))
+                    keys))
+    ))
+  )
 
 (defun ifdef-metrics ()
   (sort
