@@ -23,6 +23,55 @@
 ;(ql:quickload "unix-options")
 (load "diff-sexp.lisp")
 
+(defmacro defmacro! (&body body)
+  "Shorthand for lol:defmacro"
+  `(lol:defmacro! ,@body))
+
+(defun repeat (x n)
+  (let ((ls '())
+        (i 0))
+    (tagbody again
+       (pushr! ls x)
+       (incf i)
+       (if (< i n)
+           (go again)))
+    ls))
+
+(defun pushr1 (ls elem)
+  "Pushes a single elem to the rightmost side of the list"
+  (assert (listp ls))
+  (append ls (list elem)))
+
+(defun pushl1 (ls elem)
+  "Pushes a single elem to the leftmost side of the list"
+  (assert (listp ls))
+  (append (list elem) ls))
+
+(defun pushr (ls &rest elems)
+  "Pushes a list of elems to the rightmost side of the list"
+  (reduce #'pushr1 elems :initial-value ls))
+
+(defmacro! pushr! (ls &rest elems)
+  "Same as pushr, but overwrites the list"
+  `(setf ,ls (pushr ,ls ,@elems)))
+
+(defun pushl (ls &rest elems)
+  "Pushes a list of elems to the leftmost side of the list"
+  (reduce #'pushl1 elems :initial-value ls))
+
+(defun pushlr (ls &rest elems)
+  (pushr (pushl ls elems) elems)
+  )
+
+(defun pushrl (ls &rest elems)
+  "Same as above. But added for symmetry"
+  (pushl (pushr ls elems) elems)
+  )
+
+(defmacro! pushl! (ls &rest elems)
+  "Same as pushl, but overwrites the list"
+  `(setf ,ls (pushl ,ls ,@elems)))
+
 (defun sha256-file (path)
   (let ((digester (ironclad:make-digest :sha256)))
     (ironclad:digest-file digester path)
@@ -34,10 +83,6 @@
       (*error-output* "/dev/null" :direction :output :if-exists :supersede)
     (load path))
   )
-
-(defmacro defmacro! (&body body)
-  "Shorthand for lol:defmacro"
-  `(lol:defmacro! ,@body))
 
 (defmacro! uuid ()
   (uuid:make-v4-uuid))
@@ -225,37 +270,48 @@
   (setf dirhist (popr dirhist))
   )
 
+(defvar blip-dirs '())
+(defvar blip-files '())
 
-(defvar blip-root "/depot/synthesis/blip/")
-(defvar blip-stor (str-cat blip-root "stor/"))
-(defvar blip-tickets (str-cat blip-stor "tickets/"))
-(defvar blip-meta (str-cat blip-root "meta/"))
-(defvar blip-tmp (str-cat blip-meta "tmp/"))
-(defvar blip-du (str-cat blip-meta "disk-usage/"))
-(defvar blip-bin (str-cat blip-meta "bin/"))
-(defvar blip-env (str-cat blip-meta "env/"))
-(defvar blip-env-stack (str-cat blip-env "stack"))
-(defvar blip-env-avail (str-cat blip-env "avail"))
-(defvar blip-env-sha (str-cat blip-env "sha"))
+(defun blip-dir (dir)
+  ;(pushr! blip-dirs dir)
+  (mkdir dir)
+  dir)
+
+(defun blip-file (file)
+  (pushr! blip-files file)
+  file)
+
+;;; All of these dirs get created at compile-time. This file must be in the
+;;; `blip-self-repo` dir (see below).
+(defvar blip-root (blip-dir "/depot/synthesis/blip/"))
+(defvar blip-stor (blip-dir (str-cat blip-root "stor/")))
+(defvar blip-tickets (blip-dir (str-cat blip-stor "tickets/")))
+(defvar blip-meta (blip-dir (str-cat blip-root "meta/")))
+(defvar blip-tmp (blip-dir (str-cat blip-meta "tmp/")))
+(defvar blip-du (blip-dir (str-cat blip-meta "disk-usage/")))
+(defvar blip-bin (blip-dir (str-cat blip-meta "bin/")))
+(defvar blip-env (blip-dir (str-cat blip-meta "env/")))
+(defvar blip-in-xform nil)
+(defvar blip-xform (blip-dir (str-cat blip-meta "xform/")))
+(defvar blip-env-stack (blip-file (str-cat blip-env "stack")))
+(defvar blip-env-avail (blip-file (str-cat blip-env "avail")))
+(defvar blip-env-sha (blip-file (str-cat blip-env "sha")))
 (defvar blip-core (str-cat blip-bin "blip"))
-(defvar blip-logs (str-cat blip-meta "logs/"))
-(defvar blip-repos (str-cat blip-stor "repos/"))
-(defvar blip-asts (str-cat blip-stor "repo-asts/"))
-(defvar blip-repo-meta (str-cat blip-stor "repo-meta/"))
-(defvar blip-joyent-asts (str-cat blip-asts "joyent/"))
-(defvar blip-joyent-meta (str-cat blip-repo-meta "joyent/"))
-(defvar blip-joyent-repos (str-cat blip-repos "joyent/"))
-(defvar blip-repos-index (str-cat blip-stor "repos-index/"))
-(defvar blip-joyent-repo-list (str-cat blip-repos-index "joyent"))
-(defvar blip-self-repo (str-cat blip-repos "blip/"))
+(defvar blip-logs (blip-dir (str-cat blip-meta "logs/")))
+(defvar blip-repos (blip-dir (str-cat blip-stor "repos/")))
+(defvar blip-asts (blip-dir (str-cat blip-stor "repo-asts/")))
+(defvar blip-repo-meta (blip-dir (str-cat blip-stor "repo-meta/")))
+(defvar blip-repos-index (blip-dir (str-cat blip-stor "repos-index/")))
+(defvar blip-self-repo (blip-dir (str-cat blip-repos "blip/")))
 (defvar blip-code (str-cat blip-self-repo "blip.lisp"))
-(defvar blip-env-cfg (str-cat blip-env "env-cfg.lisp"))
+(defvar blip-env-cfg (blip-file (str-cat blip-env "env-cfg.lisp")))
 (defvar blip-latest-ix-ver 0)
 (defvar github-base-url "https://github.com/")
 (defvar npm-base-url "https://registry.npmjs.com/")
 (defvar gerrit-base-url "https://cr.joyent.us/p/")
 (defvar github-api-url "https://api.github.com/")
-(defvar blip-github-users (str-cat blip-repos-index "github-users"))
+(defvar blip-github-users (blip-file (str-cat blip-repos-index "github-users")))
 
 (defun blip-env-cfg-currentp ()
   (let* ((shanew (sha256-file blip-env-cfg))
@@ -374,6 +430,19 @@
   (pushenv (load-env (car (last (file-to-form blip-env-stack)))))
   )
 
+(defun run-xform (&rest n)
+  (cond
+    ((= 1 (length n) (not (string= (car n) "-v")))
+     (setf blip-in-xform (car n))
+     (quiet-load (str-cat blip-xform (car n) ".lisp")))
+    ((and (= 2 (length n)) (string= (car n) "-v"))
+     (setf blip-in-xform (cadr n))
+     (load (str-cat blip-xform (cadr n) ".lisp")))
+    ((and t)
+     (print "Bad args"))
+    )
+  )
+
 (defmacro! in-ast-ls-cli (&body body)
   `(let* ((noun nouns)
           (pref nil)
@@ -421,6 +490,10 @@
 (defun print-ln (form)
   (print form)
   (format t "~%"))
+
+(defun mk-blip-dirs ()
+  (map 'nil #'(lambda (d) (mkdir d)) blip-dirs)
+  )
 
 (defun main-impl (argv)
   (let* ((verb (cadr argv))
@@ -619,7 +692,7 @@
       ((is-cmd-verb "jobs")
        )
       ((is-cmd-verb "xform")
-       )
+       (run-xform nouns))
       ((is-cmd-verb "github-users")
        (print-ln (file-to-form blip-github-users))
        )
@@ -713,31 +786,6 @@
   "This saves an executable core to the proper location"
   (save-core blip-core))
 
-(defun pushr1 (ls elem)
-  "Pushes a single elem to the rightmost side of the list"
-  (assert (listp ls))
-  (append ls (list elem)))
-
-(defun pushl1 (ls elem)
-  "Pushes a single elem to the leftmost side of the list"
-  (assert (listp ls))
-  (append (list elem) ls))
-
-(defun pushr (ls &rest elems)
-  "Pushes a list of elems to the rightmost side of the list"
-  (reduce #'pushr1 elems :initial-value ls))
-
-(defmacro! pushr! (ls &rest elems)
-  "Same as pushr, but overwrites the list"
-  `(setf ,ls (pushr ,ls ,@elems)))
-
-(defun pushl (ls &rest elems)
-  "Pushes a list of elems to the leftmost side of the list"
-  (reduce #'pushl1 elems :initial-value ls))
-
-(defmacro! pushl! (ls &rest elems)
-  "Same as pushl, but overwrites the list"
-  `(setf ,ls (pushl ,ls ,@elems)))
 
 (defun append-ls (ls)
   (apply #'append ls))
@@ -1801,8 +1849,16 @@
     ))
 
 
-(defun fcall-name-eq (fcall name)
+(defun js-fcall-name-eq (fcall name)
   (and (is-js-fcall fcall) (match-str-list name (get-fcall-name fcall))))
+
+(defun js-vbind-name-eq (vbind name)
+  (and (is-js-var-binding vbind) (match-str-list name (get-js-vbind-name vbind))))
+
+(defun js-obj-key-eq (obj-lit-rec name)
+  (and (is-js-obj-lit-rec obj-lit-rec)
+       (match-str-list name (get-js-obj-key obj-lit-rec)))
+  )
 
 (defun is-c-fdef (ls)
   (and (listp ls)
@@ -2880,6 +2936,40 @@
   (assert (is-js-obj-lit-rec ls))
   (car ls))
 
+(defun set-js-obj-key (ls key)
+  (assert (is-js-obj-lit-rec ls))
+  (assert (or (stringp key) (listp key)))
+  (if (stringp str)
+      (setf (car ls) (str-to-char-ls key)))
+  (if (listp str)
+      (setf (car ls) key))
+  )
+
+(defun set-js-fdef-name (ls name)
+  (assert (is-js-fdef ls))
+  (tagbody again
+     (cond
+       ((and (is-paren-group (cadr ls))
+             (not (match-str-list "function" (car ls))))
+         (setf ls name)
+        )
+       ((and (is-paren-group (cadr ls))
+             (match-str-list "function" (car ls)))
+        (setf (cdr ls) (cons name (cdr ls)))
+        )
+       ((and t)
+        (setf ls (cdr ls))
+        (go again)
+        )
+       )
+     )
+  )
+
+(defun set-js-fcall-name (ls name)
+  (assert (is-js-fcall ls))
+  (setf (car ls) name)
+  )
+
 (defun get-fcall-params (ls)
   (progn
     (assert (is-js-fcall ls))
@@ -3084,12 +3174,30 @@
   (file-to-forms-impl input))
 
 (defun form-to-file-impl (form output)
-  (let ((out (open output :direction :output :if-exists :supersede
-                                    :if-does-not-exist :create)))
+  (let ((out nil)
+        (pathls (str-split "/" output)))
+    (if (> (length pathls) 1)
+        (mkdir (apply #'str-cat (intersperse (popr pathls) "/")))
+        )
+    (setf out (open output :direction :output :if-exists :supersede
+                 :if-does-not-exist :create))
     (prin1 form out)
     (finish-output out)
     (close out)
   ))
+
+(defun str-to-file (str output)
+  (let ((out (open output :direction :output :if-exists :supersede
+                          :if-does-not-exist :create)))
+    (write-string str out)
+    (finish-output out)
+    (close out)
+    )
+  )
+
+(defun char-ls-to-file (cls output)
+  (str-to-file (char-ls-to-str cls) output)
+  )
 
 (defun file-to-char-ls (input)
   (file-to-char-ls-impl input))
@@ -3553,7 +3661,7 @@
     ))
 
 (defun is-require (f)
-  (fcall-name-eq f "require"))
+  (js-fcall-name-eq f "require"))
 
 (defun walk-print-fcall-args (f s w)
   (print-fcall-args f))
@@ -3714,6 +3822,23 @@
   (auto-walk-tree-aux tree walk)
   )
 
+(defun splice-subtree-aux (tree walk subtree)
+  (cond
+    ((not walk)
+     (setf (car tree) subtree))
+    ((eql 'd (car walk))
+     (splice-subtree-aux  (car tree) (cdr walk) subtree))
+    ((eql 'r (car walk))
+     (splice-subtree-aux (cdr tree) (cdr walk) subtree))
+    ((and t)
+     (assert nil))
+    ))
+
+(defun splice-subtree (tree walk subtree)
+  (splice-subtree-aux tree walk subtree)
+  tree ;;; XXX VERIFY that this contains a spliced-in subtree
+  )
+
 (defun get-path-subtree (path index &optional pov)
   (let* ((pairs nil))
     (if (or (not pov) (equal pov :down))
@@ -3729,6 +3854,23 @@
                         (auto-walk-tree (path-index-ast index)
                                         (unfold-list (cadr p))))))
                  pairs))))
+  )
+
+(defun get-path-walk (path index &optional pov)
+  (let* ((pairs nil))
+    (if (or (not pov) (equal pov :down))
+        (setf pairs (path-index-str index))
+        (setf pairs (path-index-revstr index)))
+    (list (path-index-file index) (remove nil
+                (map 'list
+                      #'(lambda (p)
+                          (cond
+                            ((string= path "/")
+                             (list (path-index-ast index) '()))
+                            ((match-path path (fmt-path (car p)))
+                             (list (path-index-ast index)
+                                   (unfold-list (cadr p))))))
+                      pairs))))
   )
 
 (defun get-path-subtree-str (path index &optional pov)
@@ -3835,7 +3977,9 @@
 (defun mapahead (func ls)
   (mapahead-aux '() func ls nil))
 
-(defun xform-ast (ast test xform stack)
+(defun xform-ast (ast test xform stack &key on-test-fail)
+  (if (not on-test-fail)
+      (setf on-test-fail 'drop))
   (if (not (listp ast))
       (return-from xform-ast ast))
   (let* ((ret nil))
@@ -3844,9 +3988,16 @@
                   (reduce #'append
                           (mapahead
                                #'(lambda (prev n rest)
-                                   (if (funcall test n)
+                                   (cond
+                                     ((or (and test (funcall test n)) (not test))
                                        (multiple-value-list
-                                        (funcall xform prev n rest stack))))
+                                        (funcall xform prev n rest stack)))
+                                     ((and test (not (funcall test n))
+                                           (equal on-test-fail 'keep))
+                                      (multiple-value-list n)
+                                      )
+                                     )
+                                   )
                                ast))))
     (setf ret (map 'list
                    #'(lambda (n)
@@ -3916,6 +4067,8 @@
        (values (gen-ws 1) n (gen-nl-ws (* 4 (- depth 1)))))
       ((and (characterp n) (CHAR= #\} n))
        (values (gen-nl-ws (* 4 (- depth 1))) n (gen-nl-ws (* 4 (- depth 1)))))
+      ((and (is-js-var-binding n) (is-word-group prev))
+       (values (gen-ws 1) n))
       ((is-js-ctl-struct n)
        (values n (gen-ws 1)))
       ((and (is-str n) (is-word-group prev))
@@ -4074,143 +4227,6 @@
 
 (defmacro! gen-blank ()
   `(valve #'validate-blank (enclose (gen-ws 1))))
-
-(defun gen-js-var (lv &optional rv)
-  "We expect lv to be a string and rv to be an AST"
-  (cond
-    ((and rv)
-     (enclose (gen-word "var") (gen-blank) (gen-word lv)
-              (gen-blank) (gen-chars "=") rv (gen-chars ";")))
-    ((not rv)
-     (enclose (gen-word "var") (gen-blank) (gen-word lv)
-              (gen-chars ";")))
-    ))
-
-;;; XXX We currently don't group non-func bindings. This means we will produce
-;;; ASTs that would be parsed in differently. It doesn't break anything, but I
-;;; feel this difference should be documented.
-(defun gen-js-bind (lv rv)
-  "We expect lv to be a string and rv to be an AST"
-  (enclose (gen-word lv) (gen-blank) (gen-chars "=") rv (gen-chars ";"))
-  )
-
-(defun gen-js-fargs (words)
-  (enclose (gen-chars "(") (mapahead #'(lambda (p n r)
-                                         (cond
-                                           ((and r)
-                                            (gen-word n)
-                                            (gen-chars ","))
-                                           ((and t)
-                                            (gen-word n))))
-                                     words) (gen-chars ")"))
-  )
-
-(defun gen-js-fcargs (asts)
-  (enclose (gen-chars "(") (mapahead #'(lambda (p n r)
-                                         (cond
-                                           ((and r)
-                                            n
-                                            (gen-chars ","))
-                                           ((and t)
-                                            n)))
-                                     asts) (gen-chars ")"))
-  )
-
-(defun gen-js-func (nm args body)
-  "Function name, list of arg-name, and ast-body (without { or })"
-  (enclose (gen-word nm) (gen-blank) (gen-js-fargs args)
-           (gen-blank) (enclose (gen-chars "{") body (gen-chars "}")))
-  )
-
-(defun gen-js-ctl-struct (ctl-word test body)
-  (enclose (gen-word ctl-word) (gen-blank)
-           (enclose (gen-chars "(") test (gen-chars ")"))
-           (enclose (gen-chars "{") body (gen-chars "}"))
-           ))
-
-
-;;; XXX Want to supply a list of 1 or more cond-pairs (a cond-test ast and a
-;;; body ast) and a final, optional else-body.
-(defun gen-js-if (conds &optional else)
-  (let ((if-asts '())
-        (res '()))
-    (map 'nil #'(lambda (c)
-                  (pushr! if-asts
-                          (gen-js-ctl-struct "if" (car cond) (cadr cond))
-                  ))
-         conds
-         )
-    (map 'nil #'(lambda (a)
-                  (pushr! res a)
-                  (pushr! res (gen-word "else"))
-                  )
-         if-asts)
-    (if (and else)
-        (pushr! res (enclose (gen-char "{") else (gen-char "}")))
-        (popr! res))
-    res
-    )
-  )
-
-(defun gen-js-while (test body)
-  (gen-js-ctl-struct "while" test body))
-
-(defun gen-js-for (test body)
-  (gen-js-ctl-struct "for" test body))
-
-(defun gen-js-do-while (test body)
-  (enclose (gen-word "do") (gen-blank)
-           (enclose (gen-chars "{") body (gen-chars "}"))
-           (gen-blank) (gen-word "while") (gen-blank)
-           (enclose (gen-chars "(") test (gen-chars ")"))
-           (gen-chars ";")
-           ))
-
-(defun gen-js-fcall (name args)
-  (enclose (gen-word name) (gen-blank) (gen-js-fcargs args) (gen-chars ";")))
-
-(defun gen-js-mbr (&rest wds)
-  "Generates a chain of at least 2 members. Arguments are either words or
-   strings."
-  (assert (> (length wds) 1))
-  (let ((ret '()))
-    (mapahead #'(lambda (p n r)
-                  (cond
-                    ((and r (stringp n))
-                     (pushr! ret (gen-word n) (gen-chars "."))
-                     )
-                    ((and r (is-word-group n))
-                     (pushr! ret n (gen-chars "."))
-                     )
-                    ((and (not r) (stringp n))
-                     (pushr! ret (gen-word n))
-                     )
-                    ((and (not r) (is-word-group n))
-                     (pushr! ret n)
-                     )
-                  ))
-              wds)
-    ret
-    )
-  )
-
-(defun gen-js-mtd (wds func args)
-  "Generate a method call and attach it to the the end of a member-chain"
-  (append (apply #'gen-js-mbr wds) (gen-chars ".") (gen-js-fcall func args)))
-
-(defun gen-js-obj-lit (&rest kvps)
-  "Takes list of KV-pairs to create obj lit. Keys are strings/words,
-   values are ASTs."
-  )
-
-(defun glue (&rest lss)
-  (let* ((res '()))
-    (map 'nil #'(lambda (ls)
-                  (setf res (append res ls)))
-         lss)
-    res
-    )
-  )
 
 (defun js-to-ast (input)
   (pipeline input #'cmt-str-regex #'white-space
@@ -5021,7 +5037,7 @@
   (let ((lc nil))
     (pushdir (str-cat blip-repos repo "/"))
     (setf lc (inferior-shell:run/ss (list "git" "rev-list"
-                                          "-1" "HEAD"
+                                          "-1" "HEAD" "--"
                                           path)))
     (popdir)
     lc
@@ -5033,7 +5049,7 @@
   (let ((lc nil))
     (pushdir (str-cat blip-repos repo "/"))
     (setf lc (inferior-shell:run/ss (list "git" "rev-list"
-                                          "-1" commit
+                                          "-1" commit "--"
                                           path)))
     (popdir)
     lc
@@ -5146,7 +5162,7 @@
 
 (defun ast-path (repo file commit)
   (expand-commit! repo commit)
-  (let* ((revid (git-file-latest-commit repo file)))
+  (let* ((revid (git-file-latest-commit-until repo file commit)))
     (str-cat blip-asts repo "/" file "/" revid)))
 
 (defun load-ast (repo file commit)

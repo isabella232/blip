@@ -371,6 +371,9 @@
   ;(map 'list #'(lambda (e) (ast-to-str (cdr e))) (get-path-subtree path index pov)))
   (get-path-subtree path index pov))
 
+(defun index-get-path-walk-impl (index path &optional pov)
+  (get-path-walk path index pov))
+
 (defun index-get-subtree-str (path &optional pov &key page force alt-idx-type)
   (pre-filter-files path
     (in-index-env force (if (and page) page 0) alt-idx-type
@@ -456,6 +459,16 @@
            #'(lambda (ix)
                (index-get-subtree-impl ix path pov))
            indices))))
+
+(defun index-get-subtree-walk (path &optional pov &key page force alt-idx-type)
+  (pre-filter-files path
+    (in-index-env force (if (and page) page 0)  alt-idx-type
+      (map 'list
+           #'(lambda (ix)
+               ;(index-get-subtree-impl ix path pov))
+               (index-get-path-walk-impl ix path pov))
+           indices)))
+  )
 
 (defun index-prefix (pref &optional pov &key page force alt-idx-type)
   (pre-filter-files pref
