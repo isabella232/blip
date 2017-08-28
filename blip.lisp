@@ -293,6 +293,7 @@
 (defvar blip-bin (blip-dir (str-cat blip-meta "bin/")))
 (defvar blip-env (blip-dir (str-cat blip-meta "env/")))
 (defvar blip-in-xform nil)
+(defvar blip-xform-args nil)
 (defvar blip-xform (blip-dir (str-cat blip-meta "xform/")))
 (defvar blip-env-stack (blip-file (str-cat blip-env "stack")))
 (defvar blip-env-avail (blip-file (str-cat blip-env "avail")))
@@ -434,9 +435,11 @@
   (cond
     ((= 1 (length n) (not (string= (car n) "-v")))
      (setf blip-in-xform (car n))
+     (setf blip-xform-args (cdr n))
      (quiet-load (str-cat blip-xform (car n) ".lisp")))
     ((and (= 2 (length n)) (string= (car n) "-v"))
      (setf blip-in-xform (cadr n))
+     (setf blip-xform-args (cddr n))
      (load (str-cat blip-xform (cadr n) ".lisp")))
     ((and t)
      (print "Bad args"))
@@ -1592,6 +1595,7 @@
   (or (match-str-list "if" ls)
       (match-str-list "for" ls)
       (match-str-list "while" ls)
+      (match-str-list "else" ls)
       (match-str-list "return" ls)))
 
 (defun is-js-ctl-struct (ls)
@@ -1732,17 +1736,6 @@
 (defun is-c-fdef-end (ls)
   (is-curly-group ls))
 
-(defun is-fcall (ls)
-  (and (listp ls)
-       (cond
-         ((= (length ls) 2)
-          (and (is-c-func-name (car ls)) (is-paren-group (cadr ls))))
-         ((= (length ls) 3)
-          (and (is-c-func-name (car ls)) (is-blank-group (cadr ls))
-               (is-paren-group (caddr ls))))
-         ((and t)
-          nil))))
-
 (defun is-js-word-or-fcall-or-arr (ls)
   (or (is-js-fcall ls) (is-js-arr ls) (is-word-group ls))
   )
@@ -1786,7 +1779,7 @@
      'operator)
     ((is-c-fdef ls)
      'function-definition)
-    ((is-fcall ls)
+    ((is-c-fcall ls)
      'function-call)
     ((is-jsarr ls)
      'js-array)
@@ -1861,27 +1854,7 @@
   )
 
 (defun is-c-fdef (ls)
-  (and (listp ls)
-       (cond
-         ((= (length ls) 3)
-          (and (is-c-func-name (car ls)) (is-paren-group (cadr ls))
-               (is-curly-group (caddr ls))))
-          ((= (length ls) 4)
-           (and (is-c-func-name (car ls))
-                (or (and (is-paren-group (cadr ls))
-                         (is-blank-group (caddr ls))
-                         (is-curly-group (cadddr ls)))
-                    (and (is-blank-group (cadr ls))
-                         (is-paren-group (caddr ls))
-                         (is-curly-group (cadddr ls))))))
-         ((= (length ls) 5)
-          (and (is-c-func-name (car ls))
-               (is-blank-group (cadr ls))
-               (is-paren-group (caddr ls))
-               (is-blank-group (cadddr ls))
-               (is-curly-group (car (cddddr ls)))))
-          ((and t)
-           nil))))
+  (and ls (listp ls) (c-fdefp (car ls) (cdr ls))))
 
 (defun is-js-fdef (ls)
   (and ls (listp ls) (js-fdefp (car ls) (cdr ls))))
@@ -1924,7 +1897,7 @@
        ))
 
 (defun is-js-fcall (ls)
-  (and (listp ls)
+  (and ls (listp ls)
        (not (is-js-fdef ls))
        (js-fcallp (car ls) (cdr ls))))
 
@@ -1933,14 +1906,18 @@
        (js-arrp (car ls) (cdr ls))))
 
 (defun is-c-fcall (ls)
-  (and (listp ls)
-       (is-c-func-name (car ls)) (is-fcall ls)))
+  (and ls (listp ls)
+       (not (is-c-fdef ls))
+       (c-fcallp (car ls) (cdr ls))))
 
 (defun is-c-fdef-or-fcall (ls)
   (or (is-c-fdef ls) (is-c-fcall ls)))
 
 (defun is-js-fdef-or-fcall (ls)
   (or (is-js-fdef ls) (is-js-fcall ls)))
+
+(defun is-c-indexable-funcs (ls)
+  (or (is-c-fdef ls) (is-c-fcall ls)))
 
 (defun is-js-indexable-funcs (ls)
   (or (is-js-fdef ls) (is-js-fcall ls) (is-js-fdef-binding ls)))
@@ -2061,35 +2038,6 @@
 
 
 ; Walk the list. Call itself on every is-nestable list along the way.
-(defun fcalls-aux (acc head tail)
-  (cond
-    ((fcallp head tail 0)
-     (let* ((agg (group-fcall head tail '()))
-            (nacc (pushr acc (car agg)))
-            (nhead (cadr agg))
-            (ntail (caddr agg)))
-       (progn  (fcalls-aux nacc nhead ntail))))
-
-     ((and (listp head) (is-nestable head))
-      (progn
-             (let ((nacc (pushr acc (fcalls head)))
-                   (nhead (car tail))
-                   (ntail (cdr tail)))
-               (fcalls-aux nacc nhead ntail))))
-     ((and (characterp head) tail)
-      (progn  (fcalls-aux (pushr acc head) (car tail) (cdr tail))))
-     ((and tail)
-      (progn  (fcalls-aux (pushr acc head) (car tail) (cdr tail))))
-     ((and head (not tail))
-      (progn  (pushr acc head)))
-     ((and (not head))
-      (progn  acc))
-     ))
-
-
-; Function call: name pgroup [ws] [semi | comma | end-group | operator]
-(defun fcalls (ls)
-  (fcalls-aux '() (car ls) (cdr ls)))
 
 (defun xform-fcall-pgroup (fc cb)
   (if (= (length fc) 2)
@@ -2114,14 +2062,6 @@
     ((= (length fd) 5)
      (list (car fd) (cadr fd) (funcall cb (caddr fd)) (cadddr fd) (car (cddddr fd))))))
 
-(defun xform-c-fdef-cgroup (fd cb)
-  (cond
-    ((= (length fd) 3)
-      (list (car fd) (cadr fd) (funcall cb (caddr fd))))
-    ((= (length fd) 4)
-     (list (car fd) (cadr fd) (caddr fd) (funcall cb (cadddr fd))))
-    ((= (length fd) 5)
-     (list (car fd) (cadr fd) (caddr fd) (cadddr fd) (funcall cb (car (cddddr fd)))))))
 
 (defun xform-js-fdef-cgroup-aux (acc head tail cb)
   (cond
@@ -2186,6 +2126,10 @@
 (defun xform-js-fdef-cgroup (fd cb)
   (xform-js-fdef-cgroup-aux '() (car fd) (cdr fd) cb))
 
+(defun xform-c-fdef-cgroup (fd cb)
+  (xform-js-fdef-cgroup fd cb)
+  )
+
 (defun xform-js-vbind-rval (fd cb)
   (xform-js-vbind-rval-aux '() (car fd) (cdr fd) cb))
 
@@ -2197,32 +2141,6 @@
 
 (defun xform-js-do-while-cgroup (cstmt cb)
   (xform-js-do-while-cgroup-aux '() (car cstmt) (cdr cstmt) cb))
-
-(defun c-fdefs-aux (acc head tail)
-  (cond
-    ((fdefp head tail 0)
-     (let* ((agg (get-c-fdef-triple head tail '()))
-            (nacc (pushr acc (car agg)))
-            (nhead (cadr agg))
-            (ntail (caddr agg)))
-       (progn  (c-fdefs-aux nacc nhead ntail))))
-    ((is-fcall head)
-         (let* ((nacc (pushr acc (xform-fcall-pgroup head #'c-fdefs))))
-           (c-fdefs-aux nacc (car tail) (cdr tail))))
-    ((and (listp head) (is-nestable head))
-     (let ((nacc (pushr acc (c-fdefs head))))
-       (progn (c-fdefs-aux nacc (car tail) (cdr tail)))))
-    ((or (and (characterp head) tail) tail)
-     (progn  (c-fdefs-aux (pushr acc head) (car tail) (cdr tail))))
-    ((and head (not tail))
-     (progn  (pushr acc head)))
-    ((and (not head))
-     (progn  acc))
-    ))
-
-; Function def: name pgroup cgroup [name != if | for | while]
-(defun c-fdefs (ls)
-  (c-fdefs-aux '() (car ls) (cdr ls)))
 
 (defun finite-match-aux (head tail match-fns count)
   (let* ((pair (car match-fns))
@@ -2358,10 +2276,32 @@
                 )
   )
 
+(defun c-fdefp (head tail)
+  (finite-match (cons head tail)
+                (list
+                 (list :o #'is-c-func-name)
+                 (list :o #'is-blank-group)
+                 (list :m #'is-paren-group)
+                 (list :o #'is-blank-group)
+                 (list :m #'is-c-fdef-end)
+                 )
+                )
+  )
+
 (defun js-fcallp (head tail)
   (finite-match (cons head tail)
                 (list
                  (list :m #'is-js-func-name)
+                 (list :o #'is-blank-group)
+                 (list :m #'is-paren-group)
+                 )
+                )
+  )
+
+(defun c-fcallp (head tail)
+  (finite-match (cons head tail)
+                (list
+                 (list :m #'is-c-func-name)
                  (list :o #'is-blank-group)
                  (list :m #'is-paren-group)
                  )
@@ -2378,40 +2318,35 @@
                 )
   )
 
-(defun group-js-fdef (head tail size)
-  (list (map
-         'list
-         #'(lambda (x) (if (is-nestable x) (js-fdefs x) x))
-         (head-n (cons head tail) size))
-        (car (popl-n tail (- size 1)))
-        (popl-n tail size)
-  ))
+(defmacro! defgrouper (name body)
+  `(defun ,name (head tail size)
+     (list (map
+            'list
+            #'(lambda (x) (,@body))
+            (head-n (cons head tail) size))
+           (car (popl-n tail (- size 1)))
+           (popl-n tail size)
+           ))
+  )
 
-(defun group-js-fcall (head tail size)
-  (list (map
-         'list
-         #'(lambda (x) (if (is-nestable x) (js-fcalls x) x))
-         (head-n (cons head tail) size))
-        (car (popl-n tail (- size 1)))
-        (popl-n tail size)
-        ))
+(defgrouper group-js-fdef
+    (if (is-nestable x) (js-fdefs x) x))
 
-(defun group-js-arr (head tail size)
-  (list (map
-         'list
-         #'(lambda (x) (if (is-nestable x) (js-arrs x) x))
-         (head-n (cons head tail) size))
-        (car (popl-n tail (- size 1)))
-        (popl-n tail size)
-        ))
+(defgrouper group-c-fdef
+    (if (is-nestable x) (c-fdefs x) x))
 
-(defun group-js-do-while-stmt (head tail size)
-  (list (map
-         'list
-         #'(lambda (x) (if (is-nestable x) (js-do-while-stmts x) x))
-         (head-n (cons head tail) size))
-        (car (popl-n tail (- size 1)))
-        (popl-n tail size)))
+(defgrouper group-js-fcall
+    (if (is-nestable x) (js-fcalls x) x))
+
+(defgrouper group-c-fcall
+    (if (is-nestable x) (c-fcalls x) x))
+
+(defgrouper group-js-arr
+    (if (is-nestable x) (js-arrs x) x))
+
+(defgrouper group-js-do-while-stmt
+    (if (is-nestable x) (js-do-while-stmts x) x))
+
 
 (defun first-pgroup-pos-aux (head tail count)
   (cond
@@ -2453,143 +2388,185 @@
     (,parent nacc (car tail) (cdr tail))))
 
 
-(defmacro! pipeline-until-lambda (test body)
+(defmacro! stage-when (test body)
   `(function (lambda (q)
     (if ,test
         ,body
         nil)))
   )
 
-(defmacro! js-uber-aux-impl (self-parent self matcher grouper &key fcall fdef fdef-bind
+(defmacro! c-stage-impl (self-parent self matcher grouper &key fcall fdef
                                          curly-ctl do-while flat-ctl arr nestable
-                                         var-bind obj-lit-rec mbr-chain)
-  `(defun ,self (acc head tail)
-     (let ((sz (,matcher head tail)))
-       (pipeline-until nil
-                      (pipeline-until-lambda (and sz)
-                        (group-and-continue ,self ,grouper sz))
-                      (pipeline-until-lambda (is-js-fcall head) ,fcall)
-                      (pipeline-until-lambda (is-js-arr head) ,arr)
-                      (pipeline-until-lambda (is-js-fdef head) ,fdef)
-                      (pipeline-until-lambda (is-js-fdef-binding head) ,fdef-bind)
-                      (pipeline-until-lambda (is-js-var-binding head) ,var-bind)
-                      (pipeline-until-lambda (is-js-curly-ctl-stmt head) ,curly-ctl)
-                      (pipeline-until-lambda (is-js-do-while-stmt head) ,do-while)
-                      (pipeline-until-lambda (is-js-flat-ctl-stmt head) ,flat-ctl)
-                      (pipeline-until-lambda (is-js-mbr-chain head) ,mbr-chain)
-                      (pipeline-until-lambda (is-js-obj-lit-rec head) ,obj-lit-rec)
-                      (pipeline-until-lambda (is-nestable head) ,nestable)
-                      (pipeline-until-lambda (or (and (characterp head) tail) tail)
-                                            (,self (pushr acc head) (car tail) (cdr tail)))
-                      (pipeline-until-lambda (and head (not tail)) (pushr acc head))
-                      (pipeline-until-lambda (and (not tail)) acc))
+                                         var-bind mbr-chain)
+  `(progn
+     (defun ,self (acc head tail)
+       (let ((sz (,matcher head tail)))
+         (pipeline-until nil
+                         (stage-when (and sz)
+                                                (group-and-continue ,self ,grouper sz))
+                         (stage-when (is-c-fcall head) ,fcall)
+ ;;;(stage-when (is-c-arr head) ,arr)
+                         (stage-when (is-c-fdef head) ,fdef)
+ ;;;(stage-when (is-c-var-binding head) ,var-bind)
+ ;;;(stage-when (is-c-curly-ctl-stmt head) ,curly-ctl)
+ ;;;(stage-when (is-c-do-while-stmt head) ,do-while)
+ ;;;(stage-when (is-c-flat-ctl-stmt head) ,flat-ctl)
+ ;;;(stage-when (is-c-mbr-chain head) ,mbr-chain)
+                         (stage-when (is-nestable head) ,nestable)
+                         (stage-when (or (and (characterp head) tail) tail)
+                                                (,self (pushr acc head) (car tail) (cdr tail)))
+                         (stage-when (and head (not tail)) (pushr acc head))
+                         (stage-when (and (not tail)) acc))
+         )
+       )
+     (defun ,self-parent (ls)
+       (,self '() (car ls) (cdr ls))
+       )
      )
   )
+
+(defmacro! js-stage-impl (self-parent self matcher grouper &key fcall fdef fdef-bind
+                                         curly-ctl do-while flat-ctl arr nestable
+                                         var-bind obj-lit-rec mbr-chain)
+  `(progn
+     (defun ,self (acc head tail)
+       (let ((sz (,matcher head tail)))
+         (pipeline-until nil
+                         (stage-when (and sz)
+                                                (group-and-continue ,self ,grouper sz))
+                         (stage-when (is-js-fcall head) ,fcall)
+                         (stage-when (is-js-arr head) ,arr)
+                         (stage-when (is-js-fdef head) ,fdef)
+                         (stage-when (is-js-fdef-binding head) ,fdef-bind)
+                         (stage-when (is-js-var-binding head) ,var-bind)
+                         (stage-when (is-js-curly-ctl-stmt head) ,curly-ctl)
+                         (stage-when (is-js-do-while-stmt head) ,do-while)
+                         (stage-when (is-js-flat-ctl-stmt head) ,flat-ctl)
+                         (stage-when (is-js-mbr-chain head) ,mbr-chain)
+                         (stage-when (is-js-obj-lit-rec head) ,obj-lit-rec)
+                         (stage-when (is-nestable head) ,nestable)
+                         (stage-when (or (and (characterp head) tail) tail)
+                                                (,self (pushr acc head) (car tail) (cdr tail)))
+                         (stage-when (and head (not tail)) (pushr acc head))
+                         (stage-when (and (not tail)) acc))
+         )
+       )
+     (defun ,self-parent (ls)
+       (,self '() (car ls) (cdr ls))
+       )
+     )
   )
 
-(js-uber-aux-impl js-fdefs js-fdefs-aux js-fdefp group-js-fdef
-                  ;:fcall (xform-and-continue js-fdefs-aux xform-fcall-pgroup js-fdefs)
-                  :nestable (descend-and-continue js-fdefs js-fdefs-aux))
+(defmacro! descend-stage ()
+  `(let ((ls '()))
+     (pushr! ls 'descend-and-continue pref aux)
+     (pushr! body ls)
+     )
+  )
 
-(js-uber-aux-impl js-fcalls js-fcalls-aux js-fcallp group-js-fcall
-                  :fdef (xform-and-continue js-fcalls-aux xform-js-fdef-cgroup js-fcalls)
-                  :nestable (descend-and-continue js-fcalls js-fcalls-aux))
+(defmacro! xform-stage ()
+  `(let ((ls '()))
+     (pushr! ls 'xform-and-continue aux xformer pref)
+     (pushr! body ls)
+     )
+  )
 
-
-(js-uber-aux-impl js-arrs js-arrs-aux js-arrp group-js-arr
-                  :fdef (xform-and-continue js-arrs-aux xform-js-fdef-cgroup js-arrs)
-                  :fcall (xform-and-continue js-arrs-aux xform-fcall-pgroup js-arrs)
-                  :nestable (descend-and-continue js-arrs js-arrs-aux))
-
-
-(js-uber-aux-impl js-var-bindings js-var-bindings-aux js-var-bindingp
-                  group-js-var-binding
-                  :fdef (xform-and-continue js-var-bindings-aux xform-js-fdef-cgroup
-                                            js-var-bindings)
-                  :nestable (descend-and-continue js-var-bindings
-                                                  js-var-bindings-aux))
-
-(js-uber-aux-impl js-mbr-chain js-mbr-chain-aux js-mbr-chainp group-js-mbr-chain
-                  :fcall (xform-and-continue js-mbr-chain-aux xform-fcall-pgroup
-                                             js-mbr-chain)
-                  :arr (xform-and-continue js-mbr-chain-aux xform-js-arr-bgroup js-mbr-chain)
-                  :fdef (xform-and-continue js-mbr-chain-aux xform-js-fdef-cgroup
-                                            js-mbr-chain)
-                  ;XXX descend or xform???
-                  ;:var-bind (xform-and-continue js-mbr-chain-aux xform-js-vbind-rval js-mbr-chain)
-                  :var-bind (descend-and-continue js-mbr-chain js-mbr-chain-aux)
-                  :fdef-bind (descend-and-continue js-mbr-chain
-                                                  js-mbr-chain-aux)
-                  :nestable (descend-and-continue js-mbr-chain
-                                                  js-mbr-chain-aux))
-
-(js-uber-aux-impl js-obj-lit-recs js-obj-lit-recs-aux js-obj-lit-recp
-                  group-js-obj-lit-rec
-                  :fdef-bind (descend-and-continue js-obj-lit-recs js-obj-lit-recs-aux)
-                  :var-bind (descend-and-continue js-obj-lit-recs js-obj-lit-recs-aux)
-                  :mbr-chain (descend-and-continue js-obj-lit-recs js-obj-lit-recs-aux)
-                  :fdef (xform-and-continue js-obj-lit-recs-aux xform-js-fdef-cgroup
-                                            js-obj-lit-recs)
-                  :fcall (xform-and-continue js-obj-lit-recs-aux xform-fcall-pgroup
-                                             js-obj-lit-recs)
-                  :nestable (descend-and-continue js-obj-lit-recs
-                                                  js-obj-lit-recs-aux))
-
-(js-uber-aux-impl js-curly-ctl-stmts js-curly-ctl-stmts-aux js-curly-ctl-stmtp
-                  group-js-curly-ctl-stmt
-                  :fdef (xform-and-continue js-curly-ctl-stmts-aux xform-js-fdef-cgroup
-                                      js-curly-ctl-stmts)
-                  :fcall (xform-and-continue js-curly-ctl-stmts-aux
-                          xform-fcall-pgroup js-curly-ctl-stmts)
-                  :mbr-chain (descend-and-continue js-curly-ctl-stmts
-                                                   js-curly-ctl-stmts-aux)
-                  :var-bind (descend-and-continue js-curly-ctl-stmts
-                                                  js-curly-ctl-stmts-aux)
-                  :obj-lit-rec (descend-and-continue js-curly-ctl-stmts
-                                                     js-curly-ctl-stmts-aux)
-                  ;:nestable (js-curly-ctl-stmts-aux (pushr acc head) (car tail) (cdr tail))
-                  :nestable (descend-and-continue js-curly-ctl-stmts js-curly-ctl-stmts-aux)
+(defmacro! defstage (l stagename &rest kvps)
+  (let ((stage (string-to-symbol (str-cat `,l "-stage-impl")))
+        (pref (string-to-symbol (str-cat `,l "-" `,stagename "s")))
+        (aux (string-to-symbol (str-cat `,l "-" `,stagename "s-aux")))
+        (test (string-to-symbol (str-cat `,l "-" `,stagename "p")))
+        (group (string-to-symbol (str-cat "group-" `,l "-" `,stagename)))
+        (xformer nil)
+        (body '())
+        )
+    (map 'nil #'(lambda (n)
+                  (pushr! body (car n))
+                  (cond
+                    ((equal 'descend (cadr n))
+                     (descend-stage)
+                     )
+                    ((equal 'xform (cadr n))
+                     (setf xformer (caddr n))
+                     (assert (and xformer))
+                     (xform-stage)
+                     )
+                    )
                   )
+              kvps)
+    `(,stage ,pref ,aux ,test ,group
+            ,@body)
+    )
+  )
 
-(js-uber-aux-impl js-do-while-stmts js-do-while-stmts-aux js-do-while-stmtp
-                  group-js-do-while-stmt
-                  :fdef (xform-and-continue js-do-while-stmts-aux xform-js-fdef-cgroup
-                                      js-do-while-stmts)
-                  :fcall (xform-and-continue js-do-while-stmts-aux
-                          xform-fcall-pgroup js-do-while-stmts)
-                  :obj-lit-rec (descend-and-continue js-do-while-stmts
-                                                     js-do-while-stmts-aux)
-                  :curly-ctl (xform-and-continue js-do-while-stmts-aux
-                          xform-js-curly-ctl-stmt-cgroup js-do-while-stmts)
-                  ;:nestable (js-do-while-stmts-aux (pushr acc head) (car tail) (cdr tail))
-                  :nestable (descend-and-continue js-do-while-stmts js-do-while-stmts-aux)
-                  )
+(defstage "js" "fdef" (:nestable descend))
 
-(js-uber-aux-impl js-flat-ctl-stmts js-flat-ctl-stmts-aux js-flat-ctl-stmtp
-                  group-js-flat-ctl-stmt
-                  :fdef (xform-and-continue js-flat-ctl-stmts-aux xform-js-fdef-cgroup
-                                            js-flat-ctl-stmts)
-                  :fcall (xform-and-continue js-flat-ctl-stmts-aux xform-fcall-pgroup
-                                             js-flat-ctl-stmts)
-                  :obj-lit-rec (descend-and-continue js-flat-ctl-stmts
-                                                     js-flat-ctl-stmts-aux)
-                  :curly-ctl (xform-and-continue js-flat-ctl-stmts-aux
-                                                 xform-js-curly-ctl-stmt-cgroup
-                                                 js-flat-ctl-stmts)
-                  :do-while (xform-and-continue js-flat-ctl-stmts-aux xform-js-do-while-cgroup
-                                                js-flat-ctl-stmts)
-                  )
+(defstage "c" "fdef" (:nestable descend))
 
+(defstage "js" "fcall" (:fdef xform xform-js-fdef-cgroup) (:nestable descend))
 
-; Function def: 'function' name pgroup cgroup [name != if | for | while]
-(defun js-fdefs (ls)
-  (js-fdefs-aux '() (car ls) (cdr ls)))
+(defstage "c" "fcall" (:fdef xform xform-c-fdef-cgroup) (:nestable descend))
 
-(defun js-fcalls (ls)
-  (js-fcalls-aux '() (car ls) (cdr ls)))
+(defstage "js" "arr"
+          (:fdef xform xform-js-fdef-cgroup)
+          (:fcall xform xform-fcall-pgroup)
+          (:nestable descend)
+          )
 
-(defun js-arrs (ls)
-  (js-arrs-aux '() (car ls) (cdr ls)))
+(defstage "js" "var-binding"
+          (:fdef xform xform-js-fdef-cgroup)
+          (:nestable descend)
+          )
+
+(defstage "js" "mbr-chain"
+          (:fcall xform xform-fcall-pgroup)
+          (:arr xform xform-js-arr-bgroup)
+          (:fdef xform xform-js-fdef-cgroup)
+          (:var-bind descend)
+          (:fdef-bind descend)
+          (:nestable descend)
+          )
+
+(defstage "js" "obj-lit-rec"
+          (:fdef-bind descend)
+          (:var-bind descend)
+          (:mbr-chain descend)
+          (:fdef xform xform-js-fdef-cgroup)
+          (:fcall xform xform-fcall-pgroup)
+          (:nestable descend)
+          )
+
+(defstage "js" "curly-ctl-stmt"
+          (:fdef xform xform-js-fdef-cgroup)
+          (:fcall xform xform-fcall-pgroup)
+          (:mbr-chain descend)
+          (:var-bind descend)
+          (:obj-lit-rec descend)
+          (:nestable descend)
+          )
+
+(defstage "js" "do-while-stmt"
+          (:fdef xform xform-js-fdef-cgroup)
+          (:fcall xform xform-fcall-pgroup)
+          (:mbr-chain descend)
+          (:var-bind descend)
+          (:obj-lit-rec descend)
+          (:curly-ctl xform xform-js-curly-ctl-stmt-cgroup)
+          (:nestable descend)
+          )
+
+(defstage "js" "flat-ctl-stmt"
+          (:fdef xform xform-js-fdef-cgroup)
+          (:fcall xform xform-fcall-pgroup)
+          ;;; Do we need these? vv
+          (:mbr-chain descend)
+          (:var-bind descend)
+          ;;; Do we need these? ^^
+          (:obj-lit-rec descend)
+          (:curly-ctl xform xform-js-curly-ctl-stmt-cgroup)
+          (:do-while xform xform-js-do-while-cgroup)
+          )
+
 
 (defun js-fdef-bindingp (head tail)
   (finite-match (cons head tail)
@@ -2660,130 +2637,28 @@
                 )
   )
 
-(defun js-var-bindings (ls)
-  (js-var-bindings-aux '() (car ls) (cdr ls)))
 
-(defun js-mbr-chain (ls)
-  (js-mbr-chain-aux '() (car ls) (cdr ls)))
+(defgrouper group-js-curly-ctl-stmt
+    (if (is-nestable x) (js-curly-ctl-stmts x) x))
 
-(defun js-obj-lit-recs (ls)
-  (js-obj-lit-recs-aux '() (car ls) (cdr ls)))
+(defgrouper group-js-var-binding
+    (if (is-js-fdef x) (js-var-bindings x) x))
 
+(defgrouper group-js-mbr-chain
+    (if (or (is-js-fdef-binding x) (is-js-fcall x)
+            (is-js-var-binding x) (is-js-arr x)
+            )
+        (js-mbr-chains x)
+        x))
 
-(defun group-js-curly-ctl-stmt (head tail size)
-  (list (map
-         'list
-         #'(lambda (x) (if (is-nestable x) (js-curly-ctl-stmts x) x))
-         (head-n (cons head tail) size))
-        (car (popl-n tail (- size 1)))
-        (popl-n tail size)))
+(defgrouper group-js-obj-lit-rec
+    (if (or (is-js-fdef-binding x) (is-js-fcall x)
+            (is-js-var-binding x) (is-js-arr x)
+            (is-js-mbr-chain x)
+            )
+        (js-obj-lit-recs x)
+        x))
 
-(defun group-js-var-binding (head tail size)
-  (list (map
-        'list
-        #'(lambda (x)  (if (is-js-fdef x) (js-var-bindings x) x))
-        (head-n (cons head tail) size))
-        (car (popl-n tail (- size 1)))
-        (popl-n tail size)))
-
-(defun group-js-mbr-chain (head tail size)
-  (list (map
-         'list
-         #'(lambda (x)
-             (if (or (is-js-fdef-binding x) (is-js-fcall x)
-                     (is-js-var-binding x) (is-js-arr x)
-                     )
-                 (js-mbr-chain x)
-                 x))
-         (head-n (cons head tail) size))
-        (car (popl-n tail (- size 1)))
-        (popl-n tail size)))
-
-(defun group-js-obj-lit-rec (head tail size)
-  (list (map
-         'list
-         #'(lambda (x)
-             (if (or (is-js-fdef-binding x) (is-js-fcall x)
-                     (is-js-var-binding x) (is-js-arr x)
-                     (is-js-mbr-chain x)
-                     )
-                 (js-obj-lit-recs x)
-                 x))
-         (head-n (cons head tail) size))
-        (car (popl-n tail (- size 1)))
-        (popl-n tail size)))
-
-(defun group-js-mbr-chain2 (head tail size)
-  (list (map
-         'list
-         #'(lambda (x)
-             (if (or (is-js-fdef-binding x) (is-js-fcall x))
-                 (js-mbr-chain x)
-                 x))
-         (head-n (cons head tail) size))
-        (car (popl-n tail (- size 1)))
-        (popl-n tail size)))
-
-(defun js-curly-ctl-stmts (ls)
-  (js-curly-ctl-stmts-aux '() (car ls) (cdr ls)))
-
-(defun js-do-while-stmts-aux (acc head tail)
-  (let ((sz (js-do-while-stmtp head tail)))
-    (cond
-      ((and sz)
-       (group-and-continue js-do-while-stmts-aux group-js-do-while-stmt sz))
-      ((is-js-fdef head)
-       (xform-and-continue js-do-while-stmts-aux xform-js-fdef-cgroup js-do-while-stmts))
-      ((is-js-fcall head)
-       (xform-and-continue js-do-while-stmts-aux xform-fcall-pgroup js-do-while-stmts))
-      ((is-js-curly-ctl-stmt head)
-       (xform-and-continue js-do-while-stmts-aux
-                           xform-js-curly-ctl-stmt-cgroup js-do-while-stmts))
-      ((and (listp head) (is-nestable head))
-       (descend-and-continue js-do-while-stmts js-do-while-stmts-aux))
-      ((or (and (characterp head) tail) tail)
-       (js-do-while-stmts-aux (pushr acc head) (car tail) (cdr tail)))
-      ((and head (not tail))
-       (pushr acc head))
-      ((and (not head))
-       acc))))
-
-(defun js-do-while-stmts (ls)
-  (js-do-while-stmts-aux '() (car ls) (cdr ls)))
-
-(defun js-flat-ctl-stmts (ls)
-  (js-flat-ctl-stmts-aux '() (car ls) (cdr ls)))
-
-(defun jsarrs-aux (acc head tail)
-  (cond
-    ((jsarrp head tail 0)
-     (let* ((agg (group-jsarr head tail '()))
-            (nacc (pushr acc (car agg)))
-            (nhead (cadr agg))
-            (ntail (caddr agg)))
-       (progn  (jsarrs-aux nacc nhead ntail))))
-    ((is-c-fdef head)
-     (let* ((nacc (pushr acc (xform-js-fdef-cgroup
-                              (xform-js-fdef-pgroup head #'jsarrs) #'jsarrs))))
-       (progn (jsarrs-aux nacc (car tail) (cdr tail)))))
-    ((is-fcall head)
-     (let* ((nacc (pushr acc (xform-fcall-pgroup head #'jsarrs))))
-       (progn  (jsarrs-aux nacc (car tail) (cdr tail)))))
-    ((and (listp head) (is-nestable head))
-     (let ((nacc (pushr acc (jsarrs head))))
-       (progn (jsarrs-aux nacc (car tail) (cdr tail)))))
-    ((or (and (characterp head) tail) tail)
-     (progn (jsarrs-aux (pushr acc head) (car tail) (cdr tail))))
-    ((and head (not tail))
-     (progn  (pushr acc head)))
-    ((and (not head))
-     (progn  acc))
-    ))
-
-
-;;; Match array-accesses. Should be similar to fcalls.
-(defun jsarrs (ls)
-  (jsarrs-aux '() (car ls) (cdr ls)))
 
 (defun js-vars (ast)
   ast)
@@ -2864,7 +2739,7 @@
               (,name (cdr ls) func))))))
 
 (def-apply fdefs-apply is-c-fdef)
-(def-apply fcalls-apply is-fcall)
+(def-apply fcalls-apply is-c-fcall)
 (def-apply nestable-apply is-nestable)
 (def-apply paren-group-apply is-paren-group)
 (def-apply bracket-group-apply is-bracket-group)
@@ -2894,11 +2769,6 @@
     (assert (is-c-fdef ls))
     (get-first-of-type ls #'is-curly-group)))
 
-(defun get-c-fdef-name (ls)
-  (progn
-    (assert (is-c-fdef ls))
-    (car ls)))
-
 (defun get-js-fdef-params (ls)
   (get-c-fdef-params ls))
 
@@ -2919,6 +2789,21 @@
 (defun get-js-fdef-name (ls)
   (assert (is-js-fdef ls))
   (get-js-fdef-name-aux nil ls))
+
+(defun get-c-fdef-name-aux (prev-word ls)
+  (cond
+    ((is-paren-group (car ls))
+     prev-word)
+    ((and (not (is-paren-group (car ls)))
+          (not (is-word-group (car ls))))
+     (get-c-fdef-name-aux prev-word (cdr ls)))
+    ((is-word-group (car ls))
+     (get-c-fdef-name-aux (car ls) (cdr ls)))
+    ))
+
+(defun get-c-fdef-name (ls)
+  (assert (is-c-fdef ls))
+  (get-c-fdef-name-aux nil ls))
 
 (defun get-js-ctl-name (ls)
   (assert (is-js-any-ctl-stmt ls))
@@ -3384,9 +3269,9 @@
   (let ((idx-bool nil))
     (cond
       ((or (equal type :funcs) (equal type nil))
-       (setf idx-bool #'is-c-fdef-or-fcall))
+       (setf idx-bool #'is-c-indexable-funcs))
       ((equal type :funcs-conds)
-       (setf idx-bool #'is-c-fdef-or-fcall))
+       (setf idx-bool #'is-c-indexable-funcs))
       )
     idx-bool
     )
@@ -3572,7 +3457,7 @@
 (x-list-node-impl js-list-words-impl is-word-group identity)
 (cache-x-list-node cache-js-list-words js-list-words-impl "/ls-words")
 
-(x-list-node-impl c-list-fcalls-impl is-fcall get-fcall-name)
+(x-list-node-impl c-list-fcalls-impl is-c-fcall get-fcall-name)
 (cache-x-list-node cache-c-list-fcalls c-list-fcalls-impl "/ls-fcalls")
 
 (x-list-node-impl c-list-fdefs-impl is-c-fdef get-c-fdef-name)
@@ -4236,7 +4121,7 @@
             #'js-fcalls
             #'js-arrs
             #'js-var-bindings
-            #'js-mbr-chain
+            #'js-mbr-chains
             #'js-obj-lit-recs
             #'js-vars
             #'js-curly-ctl-stmts
@@ -4287,12 +4172,16 @@
 (defun c-to-ast (input)
   (pipeline input #'cmt-str #'white-space
             #'blanks #'words #'punctuations
-            #'nestables #'fcalls #'c-fdefs #'jsarrs))
+            #'nestables #'c-fdefs #'c-fcalls))
 
 
 (defun test-ast ()
   (js-to-ast
    (str-to-char-ls "var foo = require /*cmt*/ ('module'); var bar = require('module');var myfunc = function foo (a, b, c) { var func2 = function (abc) { return x } };")))
+
+(defun test-c-ast ()
+  (c-to-ast
+   (str-to-char-ls "/*cmt*/ void mdb_set_config(const char *s) { return (1 + 2 + 3); }")))
 
 (defun test-fcop ()
   (js-to-ast
@@ -5021,6 +4910,16 @@
     hc
     ))
 
+(defun git-all-commits (repo)
+  "Used to get list of all commit SHAs."
+  (let ((rc nil))
+    (pushdir (str-cat blip-repos repo "/"))
+    (setf rc (inferior-shell:run/ss (list "git" "rev-list"
+                                          "HEAD")))
+    (popdir)
+    (str-split "\\n" rc)
+    ))
+
 (defun git-root-commits (repo)
   "Used to get root commits (like the first commit, and merges)"
   (let ((rc nil))
@@ -5066,6 +4965,17 @@
     (popdir)
     (str-split "\\n" lc)
     ))
+
+(defun git-commit-info (repo commit)
+  (let ((ret nil))
+    (pushdir (str-cat blip-repos repo "/"))
+    (setf ret (inferior-shell:run/ss (list "git" "--no-pager" "show"
+                                          "-s" "--pretty=fuller"
+                                          commit)))
+    (popdir)
+    ret
+    )
+  )
 
 (defun git-amend-log-misdeletion (repo file commit)
   (let* ((outdir (str-cat blip-repo-meta repo "/amends/"))
