@@ -37,6 +37,25 @@
            (go again)))
     ls))
 
+(defmacro! dosquare (args &body body)
+  (assert (= (length args) 3))
+  (let ((x (car args))
+        (y (cadr args))
+        (ls (caddr args))
+        )
+    (assert (equal (type-of x) 'symbol))
+    (assert (equal (type-of y) 'symbol))
+    ;(assert (equal (type-of ls) 'cons))
+    `(dolist (,x ,ls)
+       (dolist (,y ,ls)
+         ,@body
+         ))
+    )
+  )
+
+(defmacro! diff-forms (a b)
+  `(mw-diff-sexp:diff-sexp ,a ,b))
+
 (defun pushr1 (ls elem)
   "Pushes a single elem to the rightmost side of the list"
   (assert (listp ls))
@@ -144,8 +163,12 @@
 (defun string-to-symbol (s)
   (intern (string-upcase s)))
 
-(defun symbol-to-string (s)
-  (string-downcase (symbol-name s)))
+(defun symbol-to-string (s &optional upcase)
+  (if (and upcase)
+      (symbol-name s)
+      (string-downcase (symbol-name s))
+      )
+  )
 
 (defun string-to-keyword (s)
   (intern (string-upcase s) "KEYWORD"))
@@ -431,18 +454,31 @@
   (pushenv (load-env (car (last (file-to-form blip-env-stack)))))
   )
 
-(defun run-xform (&rest n)
-  (cond
-    ((= 1 (length n) (not (string= (car n) "-v")))
-     (setf blip-in-xform (car n))
-     (setf blip-xform-args (cdr n))
-     (quiet-load (str-cat blip-xform (car n) ".lisp")))
-    ((and (= 2 (length n)) (string= (car n) "-v"))
-     (setf blip-in-xform (cadr n))
-     (setf blip-xform-args (cddr n))
-     (load (str-cat blip-xform (cadr n) ".lisp")))
-    ((and t)
-     (print "Bad args"))
+(defun load-xform (s)
+  (load (str-cat blip-xform s))
+  )
+
+(defun run-xform (n)
+  (let ((verbose nil))
+    (cond
+      ((not (string= (car n) "-v"))
+       (setf blip-in-xform (car n))
+       (setf blip-xform-args (cdr n)))
+      ((string= (car n) "-v")
+       (setf verbose t)
+       (setf blip-in-xform (cadr n))
+       (setf blip-xform-args (cddr n)))
+      )
+    (cond
+      ((not blip-in-xform)
+       (print "Bad args")
+       (print n)
+       (return-from run-xform))
+      )
+    (if (and verbose)
+        (load (str-cat blip-xform (cadr n) ".lisp"))
+        (quiet-load (str-cat blip-xform (car n) ".lisp"))
+        )
     )
   )
 
@@ -495,7 +531,7 @@
   (format t "~%"))
 
 (defun mk-blip-dirs ()
-  (map 'nil #'(lambda (d) (mkdir d)) blip-dirs)
+  (dolist (d blip-dirs) (mkdir d))
   )
 
 (defun main-impl (argv)
@@ -544,7 +580,7 @@
        (format t "github-user-pull $username ~%")
        (format t "pull-env ~%")
        (format t "strap-repo ~%")
-       (format t "eval $lisp-code ~%")
+       (format t "eval $lisp-file ~%")
        )
       ((is-cmd-verb "compute-disk-usage")
        (let ((date (get-universal-time)))
@@ -609,6 +645,11 @@
       ((is-cmd-verb "index-print")
        (load-top-env)
        (in-index-nopath-cli (print-ln (index-print pov :page page :force force
+                                                       :alt-idx-type alt-idx-type)))
+       )
+      ((is-cmd-verb "index-print-sort")
+       (load-top-env)
+       (in-index-nopath-cli (print-ln (index-print-sort pov :page page :force force
                                                        :alt-idx-type alt-idx-type)))
        )
       ((is-cmd-verb "index-build")
@@ -695,6 +736,7 @@
       ((is-cmd-verb "jobs")
        )
       ((is-cmd-verb "xform")
+       (load-top-env)
        (run-xform nouns))
       ((is-cmd-verb "github-users")
        (print-ln (file-to-form blip-github-users))
@@ -745,9 +787,10 @@
        (strap-git-repo (get-env-var 'repo))
        )
       ((is-cmd-verb "eval")
+       (load-top-env)
        (if (cadr nouns)
            (form-to-file (eval (read-from-string (car nouns)))
-                         (str-car blip-root (car nouns)))
+                         (str-cat blip-root (car nouns)))
            (print (eval (read-from-string (car nouns))))
            )
        )
@@ -893,10 +936,6 @@
   `(setf ,ls (popr ,ls)))
 
 
-(defun num-ngrams (n list)
-  "Number of possible ngrams of size `n` for the list"
-  (floor (/ (length list) n)))
-
 (defun ngrams-aux (acc n list)
   (cond ((< (length list) n)
          (append acc '()))
@@ -906,6 +945,20 @@
 (defun ngrams (n list)
   "Computes all ngrams of a list"
   (ngrams-aux '() n list))
+
+(defun quantize (list)
+  (let ((tbl (make-hash-table :test #'equal))
+        (list-tbl '()))
+    (dolist (e list)
+      (incf (gethash e tbl 0))
+      )
+    (maphash #'(lambda (k v)
+                 (pushr! list-tbl (list k v))
+                 )
+             tbl)
+    (sort list-tbl #'< :key #'cadr)
+    )
+  )
 
 ;;; Some basic string/char-list conversion funcs.
 
@@ -1070,58 +1123,87 @@
            (CHAR= c #\-) (CHAR= c #\*) (CHAR= c #\/) (CHAR= c #\!) (CHAR= c #\~)
            (CHAR= c #\%) (CHAR= c #\|) (CHAR= c #\&) (CHAR= c #\^))))
 
+(defun is-cl-punctuation (c)
+  (and c (character c)
+       (or (CHAR= c #\() (CHAR= c #\)) (CHAR= c #\')))
+    )
+
 (defun is-non-nestable-punctuation (c)
   (and (is-punctuation c) (CHAR/= c #\{) (CHAR/= c #\}) (CHAR/= c #\()
        (CHAR/= c #\)) (CHAR/= c #\[) (CHAR/= c #\])))
 
+(defun is-non-nestable-cl-punctuation (c)
+  (and (is-cl-punctuation c) (CHAR/= c #\() (CHAR/= c #\))))
+
 (defun is-word-char (c)
   (and c (characterp c) (not (is-white-space c)) (not (is-punctuation c))))
 
-(defun words-aux (stack head tail)
-  (tagbody
-    again
-      (cond
-        ((and (not head) (not tail))
+(defun is-symbol-char (c)
+  (and c (characterp c) (not (is-white-space c)) (not (is-cl-punctuation c))))
+
+(defmacro! def-symbols (name char-test)
+  (let ((aux (string-to-symbol (str-cat `,name "-aux")))
+        (name (string-to-symbol `,name)))
+    `(progn
+       (defun ,aux (stack head tail)
+         (tagbody
+          again
+            (cond
+              ((and (not head) (not tail))
+               )
+              ((and (listp head) tail)
+               (stack-pushr stack head)
+               (advance-scanner)
+               (go again))
+              ((and (listp head) (not tail))
+               (stack-pushr stack head)
+               (advance-scanner)
+               (go again))
+              ((characterp head)
+               (cond
+                 ((,char-test head)
+                  (let ((ls '()))
+                    (tagbody
+                     lsagain
+                       (cond
+                         ((,char-test head)
+                          (pushr! ls head)
+                          (advance-scanner)
+                          (go lsagain))
+                         ((and t)
+                          (stack-pushr stack ls)
+                          (go again))))))
+                 ((and t)
+                  (stack-pushr stack head)
+                  (advance-scanner)
+                  (go again))))
+              ((and t)
+               (stack-pushr stack head)
+               (advance-scanner)
+               (go again)
+               )
+              )
+            )
+         (stack-list stack)
          )
-        ((and (listp head) tail)
-         (stack-pushr stack head)
-         (advance-scanner)
-         (go again))
-        ((and (listp head) (not tail))
-         (stack-pushr stack head)
-         (advance-scanner)
-         (go again))
-        ((characterp head)
-         (cond
-           ((is-word-char head)
-            (let ((ls '()))
-              (tagbody
-               lsagain
-                 (cond
-                   ((is-word-char head)
-                    (pushr! ls head)
-                    (advance-scanner)
-                    (go lsagain))
-                   ((and t)
-                    (stack-pushr stack ls)
-                    (go again))))))
-           ((and t)
-            (stack-pushr stack head)
-            (advance-scanner)
-            (go again))))
+       (defun ,name (ls)
+         (,aux (make-instance 'stack) (car ls) (cdr ls)))
+       )
+    )
+  )
 
-           ((and t)
-            (stack-pushr stack head)
-            (advance-scanner)
-            (go again)
-            )))
-  (stack-list stack))
-
-(defun words (ls)
-  (words-aux (make-instance 'stack) (car ls) (cdr ls)))
+(def-symbols "words" is-word-char)
+(def-symbols "cl-symbols" is-symbol-char)
 
 (defun test-words ()
-  (pipeline (str-to-char-ls "123  /* */ 123  123  123  ") #'cmt-str #'white-space #'blanks #'words))
+  (pipeline (str-to-char-ls "123  /* */ 123  123  123  ")
+            #'cmt-str-regex #'white-space #'blanks #'words
+            ))
+
+(defun test-symbols ()
+  (pipeline (str-to-char-ls "123  \"123\"  ;123  123  ")
+            #'cl-cmt-str #'white-space #'cl-blanks #'symbols
+            ))
 
 ;;; Punctuation grouping and related boolean tests (also used in punctuation)
 
@@ -1130,43 +1212,52 @@
       (punctuations-list (pushr acc head) (car tail) (cdr tail))
       (list acc (cons head tail))))
 
-(defun punctuations-aux (stack head tail)
-  (tagbody
-   again
-     (cond
-       ((and (not head) (not tail))
-        )
-       ((and (listp head) tail)
-        (stack-pushr stack head)
-        (advance-scanner)
-        (go again))
-       ((and (listp head) (not tail))
-        (stack-pushr stack head)
-        (advance-scanner)
-        (go again))
-       ((characterp head)
-        (cond
-          ((is-non-nestable-punctuation head)
-           (let ((ls '()))
-             (tagbody
-              lsagain
-                (cond
-                  ((is-non-nestable-punctuation head)
-                   (pushr! ls head)
-                   (advance-scanner)
-                   (go lsagain))
-                  ((and t)
-                   (stack-pushr stack ls)
-                   (go again))))))
-          ((and t)
-           (stack-pushr stack head)
-           (advance-scanner)
-           (go again))))))
-  (stack-list stack)
+(defmacro! def-punctuation (name is-punc)
+  (let ((aux (string-to-symbol (str-cat `,name "-aux")))
+        (name (string-to-symbol `,name)))
+    `(progn
+       (defun ,aux (stack head tail)
+         (tagbody
+          again
+            (cond
+              ((and (not head) (not tail))
+               )
+              ((and (listp head) tail)
+               (stack-pushr stack head)
+               (advance-scanner)
+               (go again))
+              ((and (listp head) (not tail))
+               (stack-pushr stack head)
+               (advance-scanner)
+               (go again))
+              ((characterp head)
+               (cond
+                 ((,is-punc head)
+                  (let ((ls '()))
+                    (tagbody
+                     lsagain
+                       (cond
+                         ((is-non-nestable-punctuation head)
+                          (pushr! ls head)
+                          (advance-scanner)
+                          (go lsagain))
+                         ((and t)
+                          (stack-pushr stack ls)
+                          (go again))))))
+                 ((and t)
+                  (stack-pushr stack head)
+                  (advance-scanner)
+                  (go again))))))
+         (stack-list stack)
+         )
+       (defun ,name (ls)
+         (,aux (make-instance 'stack) (car ls) (cdr ls)))
+       )
+    )
   )
 
-(defun punctuations (ls)
-  (punctuations-aux (make-instance 'stack) (car ls) (cdr ls)))
+(def-punctuation "punctuations" is-non-nestable-punctuation)
+(def-punctuation "cl-punctuations" is-non-nestable-cl-punctuation)
 
 (defun test-puncts ()
   (pipeline (str-to-char-ls "123 (1 2 3); 1,2,3 /* */ 123 123 123 ") #'cmt-str
@@ -1206,8 +1297,34 @@
 (defun nestables (ls)
   (nestables-aux '() (car ls) (cdr ls) nil))
 
+(defun cl-nestables-aux (acc head tail fin)
+  (cond
+    ((and head (listp head))
+     (cl-nestables-aux (pushr acc head) (car tail) (cdr tail) fin))
+    ((and (not head) (not tail))
+     (values acc tail))
+    ((or (and fin head (CHAR= head fin))
+         (and head (not tail)))
+     (values (pushr acc head) tail))
+    ((characterp head)
+     (cond
+       ((and acc (CHAR= head #\())
+        (multiple-value-bind (nacc ntail) (cl-nestables-aux '() head tail #\))
+          (cl-nestables-aux (pushr acc nacc) (car ntail) (cdr ntail) fin)
+          )
+        )
+       ((and t)
+        (cl-nestables-aux (pushr acc head) (car tail) (cdr tail) fin)
+        )))))
+
+(defun cl-nestables (ls)
+  (cl-nestables-aux '() (car ls) (cdr ls) nil))
+
 (defun test-nestables ()
   (nestables (str-to-char-ls "fn (a, b, c) { a e; a e; a e = c; a e = c && b || {}; cb();} more() { stuff }; foo(); foo(); foo();")))
+
+(defun test-cl-nestables ()
+  (cl-nestables (str-to-char-ls "fn (a, b, c) { a e; a e; a e = c; a e = c && b || {}; cb();} more() { stuff }; foo(); foo(); foo();")))
 
 (defun nestable-assert (char head)
   (cond
@@ -1955,18 +2072,6 @@
          ((and t) nil)))
        (5 (and t)))))
 
-(def-5-state-match fcallp is-js-func-name is-blank-group is-paren-group
-  is-blank-group is-fcall-end)
-
-(def-5-state-match fdefp is-js-func-name is-blank-group is-paren-group
-  is-blank-group is-c-fdef-end)
-
-;(def-5-state-match js-fdefp is-js-func-name is-blank-group is-paren-group
-;  is-blank-group is-c-fdef-end)
-
-(def-5-state-match jsarrp is-js-func-name is-blank-group is-bracket-group
-  is-blank-group is-jsarr-end)
-
 (def-5-state-match json-kv-pair-p is-str is-blank-group is-colon-group
   is-blank-group is-kvp-end)
 
@@ -1977,32 +2082,6 @@
 (defun count-n-blankgroup (n ls)
   (let ((nls (head-n ls n)))
     (count-if #'is-blank-group nls)))
-
-;;; Function-defining macro. The macro does following:
-;;; Groups something like an fcall, jsarr, or kvp starting at head. Returns a tuple of:
-;;;     (grouped-$thing, new-head, new-tail)
-(defmacro! group-2-to-3 (name fletnm fletif fletcall)
-  `(defun ,name (head tail agg)
-     (let ((ws2 (count-n-blankgroup 2 (pushl tail head)))
-           (ws3 (count-n-blankgroup 3 (pushl tail head))))
-       (flet ((,fletnm (x)
-                (if (,fletif x) (,fletcall x) x)))
-         (cond
-           ((= ws2 0)
-            (list (map 'list #',fletnm (head-n (pushl tail head) 2))
-                  (car (popl-n tail 1))
-                  (popl-n tail 2)))
-           ((= ws3 1)
-            (list (map 'list #',fletnm (head-n (pushl tail head) 3))
-                  (car (popl-n tail 2))
-                  (popl-n tail 3)))
-           ((and t)
-            (assert (and nil)))
-           )))))
-
-(group-2-to-3 group-fcall fcalls-if-group is-paren-group fcalls)
-(group-2-to-3 group-jsarr jsarrs-if-group is-bracket-group jsarrs)
-
 
 (defmacro! group-3-to-5 (name fletnm fletif fletcall)
   `(defun ,name (head tail agg)
@@ -2030,11 +2109,7 @@
             (assert (and nil)))
            )))))
 
-(group-3-to-5 group-fdef fdefs-if-group is-nestable c-fdefs)
 (group-3-to-5 group-json-kvp kvp-if-group is-nestable json-kvp)
-
-(defun get-c-fdef-triple (head tail agg)
-  (group-fdef head tail agg))
 
 
 ; Walk the list. Call itself on every is-nestable list along the way.
@@ -2279,7 +2354,7 @@
 (defun c-fdefp (head tail)
   (finite-match (cons head tail)
                 (list
-                 (list :o #'is-c-func-name)
+                 (list :m #'is-c-func-name)
                  (list :o #'is-blank-group)
                  (list :m #'is-paren-group)
                  (list :o #'is-blank-group)
@@ -2480,20 +2555,19 @@
         (xformer nil)
         (body '())
         )
-    (map 'nil #'(lambda (n)
-                  (pushr! body (car n))
-                  (cond
-                    ((equal 'descend (cadr n))
-                     (descend-stage)
-                     )
-                    ((equal 'xform (cadr n))
-                     (setf xformer (caddr n))
-                     (assert (and xformer))
-                     (xform-stage)
-                     )
-                    )
-                  )
-              kvps)
+    (dolist (n kvps)
+      (pushr! body (car n))
+      (cond
+        ((equal 'descend (cadr n))
+         (descend-stage)
+         )
+        ((equal 'xform (cadr n))
+         (setf xformer (caddr n))
+         (assert (and xformer))
+         (xform-stage)
+         )
+        )
+      )
     `(,stage ,pref ,aux ,test ,group
             ,@body)
     )
@@ -2607,17 +2681,16 @@
   "Detects mbr-chains that contain words and end in a binding"
   (let ((fail nil))
     (if (and (is-js-mbr-chain ls) (is-js-binding (car (last ls))))
-        (map 'nil #'(lambda (e)
-                      (if (not (or (is-blank-group e)
-                                   (is-punctuation-group e)
-                                   (is-word-group e)
-                                   (is-js-binding e))
-                               )
-                          (setf fail t))
-                      (if (and (is-js-binding e) (is-js-arr (car e)))
-                          (setf fail t))
-                      )
-             ls)
+        (dolist (e ls)
+          (if (not (or (is-blank-group e)
+                       (is-punctuation-group e)
+                       (is-word-group e)
+                       (is-js-binding e))
+                   )
+              (setf fail t))
+          (if (and (is-js-binding e) (is-js-arr (car e)))
+              (setf fail t))
+          ls)
         (setf fail t)
         )
     (not fail)
@@ -2715,15 +2788,19 @@
   (if (and (cdr ls))
       (walk-tree-until (cdr ls) test work until path)))
 
-(defun walk-tree (ls test work path walk)
+(defmacro! optfuncall (fn arg)
+  `(if (and ,fn) (funcall ,fn ,arg) t)
+  )
+
+(defun walk-tree (ls test work path walk &key backoff-if)
   (if (funcall test (car ls))
       (funcall work (car ls) path walk))
-  (if (and (car ls) (listp (car ls)))
+  (if (and (car ls) (listp (car ls)) (optfuncall backoff-if (car ls)))
       (walk-tree (car ls) test work (pushr path (car ls))
-                 (pushr walk 'd)))
+                 (pushr walk 'd) :backoff-if backoff-if))
   (if (and (cdr ls))
       (walk-tree (cdr ls) test work path
-                 (pushr walk 'r))))
+                 (pushr walk 'r) :backoff-if backoff-if)))
 
 ; Walk over the top level of ls and calls func on any fdefs it finds on that
 ; level.
@@ -3113,18 +3190,13 @@
 
 (defun get-js-mbr-nested-words (ls)
   (let ((words '()))
-    (map 'nil #'(lambda (e)
-                  (cond
-                    ((is-word-group e)
-                     ;(if (> 0 (length words))
-                         ;(pushr! words '(#\.))
-                         ;)
-                     (pushr! words e)
-                     )
-                    )
-                  )
-         ls
+    (dolist (e ls)
+      (cond
+        ((is-word-group e)
+         (pushr! words e)
          )
+        )
+      )
     (flatten (intersperse words '(#\/) t))
     )
   )
@@ -3166,31 +3238,26 @@
   (let* ((prev (car ls))
          (count 1)
          (acc '()))
-    (map 'nil
-         #'(lambda (e)
-             (cond
-               ((equal e prev)
-                (incf count))
-               ((not (equal e prev))
-                (pushr! acc (list count prev))
-                (setf prev e)
-                (setf count 1))
-               ))
-         (cdr ls))
+    (dolist (e (cdr ls))
+      (cond
+        ((equal e prev)
+         (incf count))
+        ((not (equal e prev))
+         (pushr! acc (list count prev))
+         (setf prev e)
+         (setf count 1))
+        )
+      )
     (pushr! acc (list count prev))
-
   ))
 
 (defun unfold-list (ls)
   (if (= (length ls) 0)
       (return-from unfold-list nil))
   (let* ((unfls '()))
-    (map 'nil
-         #'(lambda (p)
-             (dotimes (z (car p))
-               (pushr! unfls (cadr p))))
-         ls
-         )
+    (dolist (p ls)
+      (dotimes (z (car p))
+        (pushr! unfls (cadr p))))
     unfls
   ))
 
@@ -3358,29 +3425,38 @@
     count
   ))
 
-(defun list-node-in-ast (test fmt dedup ast &optional count)
+(defun list-node-in-ast (test fmt dedup ast &key agg backoff-if)
   (let ((list '())
         (ddl '())
-        (cl '()))
+        (cl '())
+        )
+    (if (not agg)
+        (setf agg 'set)
+        )
     (walk-tree ast test
                #'(lambda (n stack walk)
                    (if (funcall test n)
                        (pushr! list (funcall fmt n))))
-               '() '()
+               '() '() :backoff-if backoff-if
                )
-    (setf ddl (remove-duplicates list :test dedup))
-    (if (and count)
-        (progn
-          (map 'list #'(lambda (e)
-                         (pushr! cl
-                                 (list e (count e list :test dedup))))
-               ddl)
-          (setf cl (stable-sort cl #'< :key #'cadr))
-          ))
-    (if (and cl)
-        cl
-        ddl)
-    ))
+    (cond
+      ((equal agg 'frequency)
+       (setf ddl (remove-duplicates list :test dedup))
+       (dolist (e ddl)
+         (pushr! cl (list e (count e list :test dedup)))
+         )
+       (stable-sort cl #'< :key #'cadr)
+       )
+      ((equal agg 'set)
+       (setf ddl (remove-duplicates list :test dedup))
+       ddl
+       )
+      ((equal agg 'list)
+       list
+       )
+      )
+    )
+  )
 
 (defmacro! load-list-nodes (name suf)
   `(defun ,name (repo file commit)
@@ -3399,7 +3475,8 @@
                           (char-ls-to-str (,getter n)))
                       #'string=
                       ast
-                      count)))
+                      :agg (if (and count) 'frequency)
+                      )))
 
 
 (defmacro! cache-x-list-node (name list-impl suf)
@@ -3623,13 +3700,19 @@
 (defun print-js-path-tree-pairs (pairs)
   (map 'list #'print-js-path-tree-pair pairs))
 
-(defun print-js-paths (index &optional pov)
-  (let* ((pairs nil))
+(defun print-js-paths (index &optional pov &key sort)
+  (let* ((pairs nil)
+         (printable nil))
     (if (or (not pov) (equal pov :down))
         (setf pairs (path-index-str index))
         (setf pairs (path-index-revstr index)))
+    (setf printable (map 'list #'print-js-path pairs))
     (list (path-index-file index)
-          (map 'list #'print-js-path pairs))))
+          (if (and sort)
+              (sort printable #'string<)
+              printable))
+    )
+  )
 
 (defun match-path (p1 p2)
   (equal p1 p2))
@@ -3930,70 +4013,91 @@
        (and (characterp (cadddr n)) (CHAR= (cadddr n) #\Space))
        ))
 
-;;; We want to not indent `};`
-;;; Also, we may want to count depty by {} and not fdefs
-(defun js-simtupid-fmt-cb (prev n rest s)
-  (let* ((depth 0))
-    (incf depth (count-if #'is-curly-group s))
-    (cond
-      ((is-js-hyperlink (car (last s)))
-       (values n))
-      ((and (is-punctuation-group n) (CHAR= #\; (car n))
-            (or (and (characterp (car rest)) (CHAR/= #\} (car rest)))
-                (not (characterp (car rest)))))
-       (values n (gen-nl-ws (* 4 depth))))
-      ((and (characterp n) (CHAR= #\{ n)
-            (or (and (characterp (car rest)) (CHAR/= #\} (car rest)))
-                (not (characterp (car rest)))))
-       (values (gen-ws 1) n (gen-nl-ws (* 4 depth))))
-      ((and (characterp n) (CHAR= #\{ n)
-            (and (characterp (car rest)) (CHAR= #\})))
-       ;(print (last s))
-       (values (gen-ws 1) n (gen-nl-ws (* 4 (- depth 1)))))
-      ((and (characterp n) (CHAR= #\} n))
-       (values (gen-nl-ws (* 4 (- depth 1))) n (gen-nl-ws (* 4 (- depth 1)))))
-      ((and (is-js-var-binding n) (is-word-group prev))
-       (values (gen-ws 1) n))
-      ((is-js-ctl-struct n)
-       (values n (gen-ws 1)))
-      ((and (is-str n) (is-word-group prev))
-       (values (gen-ws 1) n))
-      ((and (is-str n) (is-str prev))
-       (values (gen-nl-ws (* 4 depth)) n))
-      ((and (or (is-word-group n) (is-jsarr n)) ;(is-punctuation-group (car rest))
-            (or (match-punc-ls "," prev)
-                (is-word-group prev)))
-       (values (gen-ws 1) n))
-      ((match-punc-ls "," n)
-       (values n (gen-ws 1)))
-      ((or (match-any-puncs-ls '("+" "-" "*" "/" "||"
-                                 "<<" ">>" ">" "<" ">="
-                                 "<=" "==" "===" "!="
-                                 "!=="  "&&" "=") n))
-       (values (gen-ws 1) n (gen-ws 1)))
-      ((and (> depth 0) (is-js-fdef n))
-       (values (gen-nl-ws (* 4 depth))
-               (append (str-to-char-ls "<<< ")
-                       (get-js-fdef-name n)
-                       (str-to-char-ls "{}/ >>>") (gen-nl-ws (* 4 depth)))))
-      ((and (> depth 0) (is-js-fdef-binding n))
-       (values (gen-nl-ws (* 4 depth)) (str-to-char-ls "<<< ")
-               (get-js-fbind-name n) (str-to-char-ls "=/ >>>")))
-      ((and t)
-       (values n))
-      )
-    )
+(defmacro! js-simtupid-fmt-cb ()
+  "We define this lambda as a macro, so that we don't have to manually inline it
+   in the parent."
+  `(lambda (prev n rest s)
+     (let* ((depth 0))
+       (incf depth (count-if #'is-curly-group s))
+       (cond
+         ((is-js-hyperlink (car (last s)))
+          (values n))
+         ((and (is-punctuation-group n) (CHAR= #\; (car n))
+               (or (and (characterp (car rest)) (CHAR/= #\} (car rest)))
+                   (not (characterp (car rest)))))
+          (values n (gen-nl-ws (* 4 depth))))
+         ((and (characterp n) (CHAR= #\{ n)
+               (or (and (characterp (car rest)) (CHAR/= #\} (car rest)))
+                   (not (characterp (car rest)))))
+          (values (gen-ws 1) n (gen-nl-ws (* 4 depth))))
+         ((and (characterp n) (CHAR= #\{ n)
+               (and (characterp (car rest)) (CHAR= #\})))
+          (values (gen-ws 1) n (gen-nl-ws (* 4 (- depth 1)))))
+         ((and (characterp n) (CHAR= #\} n))
+          (values (gen-nl-ws (* 4 (- depth 1))) n (gen-nl-ws (* 4 (- depth 1)))))
+         ((and (is-word-group prev)
+               (or (is-js-var-binding n) (is-str n)
+                   (is-js-mbr-chain n) (is-js-fcall n)
+                   (is-word-group n))
+               )
+          (values (gen-ws 1) n))
+         ((is-js-ctl-struct n)
+          (values n (gen-ws 1)))
+         ((and (is-str n) (is-str prev))
+          (values (gen-nl-ws (* 4 depth)) n))
+         ((and (or (is-word-group n) (is-jsarr n)) ;(is-punctuation-group (car rest))
+               (or (match-punc-ls "," prev)
+                   (is-word-group prev)))
+          (values (gen-ws 1) n))
+         ((match-punc-ls "," n)
+          (values n (gen-ws 1)))
+         ((or (match-any-puncs-ls '("+" "-" "*" "/" "||"
+                                    "<<" ">>" ">" "<" ">="
+                                    "<=" "==" "===" "!="
+                                    "!=="  "&&" "=") n))
+          (values (gen-ws 1) n (gen-ws 1)))
+         ((and fold (> depth 0) (is-js-fdef n))
+          (values (gen-nl-ws (* 4 depth))
+                  (append (str-to-char-ls "<<< ")
+                          (get-js-fdef-name n)
+                          (str-to-char-ls "{}/ >>>") (gen-nl-ws (* 4 depth)))))
+         ((and fold (> depth 0) (is-js-fdef-binding n))
+          (values (gen-nl-ws (* 4 depth)) (str-to-char-ls "<<< ")
+                  (get-js-fbind-name n) (str-to-char-ls "=/ >>>")))
+         ((and t)
+          (values n))
+         )
+       )
+     )
   )
 
-(defun js-ast-fmt-simtupid (out ast)
+(defun js-ast-fmt-simtupid (out ast &optional stash-append)
   (let* ((ret nil)
-         (idx-bool (js-idx-type-to-test :funcs)))
+         (idx-bool (js-idx-type-to-test :funcs))
+         (fold-stash '())
+         (fold t))
     (setf ret (copy-ast ast
                         #'(lambda (n)
                             (not (is-blank-group n)))))
     (setf ret (xform-ast ret
                          #'identity
-                         #'js-simtupid-fmt-cb
+                         (js-simtupid-fmt-cb)
+                         '()))
+    ret
+    )
+  )
+
+(defun js-ast-fmt-simple (out ast &optional stash-append)
+  (let* ((ret nil)
+         (idx-bool (js-idx-type-to-test :funcs))
+         (fold-stash '())
+         (fold nil))
+    (setf ret (copy-ast ast
+                        #'(lambda (n)
+                            (not (is-blank-group n)))))
+    (setf ret (xform-ast ret
+                         #'identity
+                         (js-simtupid-fmt-cb)
                          '()))
     ret
     )
@@ -4073,6 +4177,8 @@
   (cond
     ((equal style :simtupid)
      (js-ast-fmt-simtupid nil ast))
+    ((equal style :simple)
+     (js-ast-fmt-simple nil ast))
     ((and t)
      (assert nil))
     ))
@@ -4089,17 +4195,16 @@
 
 (defun gen-chars (&rest cs)
   (let* ((res '()))
-    (map 'nil #'(lambda (c)
-                  (cond
-                    ((characterp c)
-                     (pushr! res c))
-                    ((stringp c)
-                     (setf res (append res (str-to-char-ls c))))
-                    ((and t)
-                     (assert nil))
-                    )
-                  )
-         cs)
+    (dolist (c cs)
+      (cond
+        ((characterp c)
+         (pushr! res c))
+        ((stringp c)
+         (setf res (append res (str-to-char-ls c))))
+        ((and t)
+         (assert nil))
+        )
+      )
     res
     )
   )
@@ -4131,9 +4236,12 @@
 
 (defun cl-to-ast (input)
   (pipeline input #'cl-cmt-str #'white-space
-            #'cl-blanks #'words #'punctuations
-            #'nestables
+            #'cl-blanks #'symbols #'cl-punctuations
+            #'cl-nestables
    ))
+
+(defun test-cl-to-ast ()
+  (cl-to-ast (str-to-char-ls "(defun foo (a b c) (+ a b c))")))
 
 (defun test-if-parse ()
   (let ((in1 "call(\"arg\", function (a, b) { if (true) if (true) { if (true) { return 1 }};});")
@@ -4717,7 +4825,7 @@
 
 (defun cache-git-log-all-branches (repo)
   (let ((branches (git-ls-branches repo)))
-    (map 'nil #'(lambda (b) (cache-git-log repo b)) branches)))
+    (dolist (b branches) (cache-git-log repo b))))
 
 (defun git-refs-aux (stack head tail)
   (tagbody
@@ -4813,8 +4921,8 @@
    (extract-git-refs (load-git-remotes repo)))))
 
 (defun fetch-git-remotes (repo)
-  (map 'nil #'(lambda (targ) (git-fetch-remote repo targ))
-       (fetchable-remote-targs repo)))
+  (dolist (targ (fetchable-remote-targs repo))
+    (git-fetch-remote repo targ)))
 
 (defun load-git-log (repo &optional branch)
   (let ((branchname (if (and branch) branch (git-current-branch repo))))
@@ -4851,9 +4959,8 @@
 
 (defun build-ast-dir (repo)
   (pushdir (str-cat blip-asts repo))
-  (map 'nil #'(lambda (f)
-                (mkdir (str-cat (cwd) "/" f)))
-       (git-show-ftree-all-time repo))
+  (dolist (f (git-show-ftree-all-time repo))
+    (mkdir (str-cat (cwd) "/" f)))
   (popdir)
   )
 
@@ -4861,9 +4968,9 @@
   (let* ((dir (str-cat blip-repo-meta repo "/root")))
     (mkdir dir)
     (pushdir dir)
-    (map 'nil #'(lambda (f)
-                  (mkdir (str-cat (cwd) "/" f)))
-         (git-show-ftree-all-time repo))
+    (dolist (f (git-show-ftree-all-time repo))
+      (mkdir (str-cat (cwd) "/" f))
+      )
     (popdir)
     )
   )
@@ -4996,11 +5103,11 @@
 
 (defun is-misdeleted (amends file)
   (let ((ret nil))
-    (map 'nil #'(lambda (a)
-                  (if (and (equal (car a) 'misdeletion)
-                           (equal (cadr a) file))
-                      (setf ret t)))
-         amends)
+    (dolist (a amends)
+      (if (and (equal (car a) 'misdeletion)
+               (equal (cadr a) file))
+          (setf ret t))
+      )
     ret
     )
   )

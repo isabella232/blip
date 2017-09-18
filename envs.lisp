@@ -202,6 +202,10 @@
   (let ((e (car (last env-stack))))
     (slot-value e var)))
 
+(defun get-env ()
+  (car (last env-stack))
+  )
+
 (defun set-env-var (var val)
   (let ((e (car (last env-stack))))
     (setf (slot-value e var) val)
@@ -259,6 +263,10 @@
 (defun index-print (&optional pov &key page force alt-idx-type)
   (in-index-env force (if (and page) page 0) alt-idx-type
     (map 'list #'(lambda (ix) (print-js-paths ix pov)) indices)))
+
+(defun index-print-sort (&optional pov &key page force alt-idx-type)
+  (in-index-env force (if (and page) page 0) alt-idx-type
+    (map 'list #'(lambda (ix) (print-js-paths ix pov :sort t)) indices)))
 
 (defun index-build (&key force alt-idx-type)
   (iter:iter
@@ -374,6 +382,12 @@
 (defun index-get-path-walk-impl (index path &optional pov)
   (get-path-walk path index pov))
 
+(defmacro! get-subtrees-using-indices ()
+  `(map 'list
+       #'(lambda (ix)
+           (index-get-subtree-impl ix path pov))
+       indices))
+
 (defun index-get-subtree-str (path &optional pov &key page force alt-idx-type)
   (pre-filter-files path
     (in-index-env force (if (and page) page 0) alt-idx-type
@@ -385,10 +399,7 @@
                                                (ast-to-str
                                                 (funcall ast-fmt ast)))
                                            (cadr ix))))
-        (map 'list
-         #'(lambda (ix)
-             (index-get-subtree-impl ix path pov))
-         indices))))))
+                      (get-subtrees-using-indices))))))
 
 (defun split-ix-path (path)
   (str-split "/|{|}|\\(|\\)|=|:" path))
@@ -455,10 +466,8 @@
 (defun index-get-subtree (path &optional pov &key page force alt-idx-type)
   (pre-filter-files path
     (in-index-env force (if (and page) page 0)  alt-idx-type
-      (map 'list
-           #'(lambda (ix)
-               (index-get-subtree-impl ix path pov))
-           indices))))
+      (get-subtrees-using-indices)
+      )))
 
 (defun index-get-subtree-walk (path &optional pov &key page force alt-idx-type)
   (pre-filter-files path
