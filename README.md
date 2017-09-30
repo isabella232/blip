@@ -52,14 +52,13 @@ CFGs, etc, if they are needed. Same thing goes for VCS's: we currently only
 support git, but will happily add support for bitkeeper, svn, etc, if the need
 arises.
 
-Currently, it is used through the SBCL REPL (either via SLIME or on the CLI).
-Chances are you won't be able to use it without some preliminary modificiations
-(like the blip-root var in blip.lisp) and guidance. Frequently, there is no
-difference between *using* the code and *developing* the code. But eventually it
-should be usable from the CLI in idiomatic unix style, optionally accepting lisp
-source files as arguments (like DTrace and Awk do). However, accepting lisp code
-on the CLI is practically impossible because quotes and backticks have meaning
-in both Bash and Common Lisp.
+See INSTALL.md for installation instructions. If you can get it running, you
+start using blip via the `blip` and `blip help` commands. See DOCKER-897 for
+examples on how to use it. If you want to ask questions that blip can't answer
+you can always write an `xform` (experimental form, extra form, external form,
+trans-formation, etc) and execute it via `blip xform`. This is useful for
+prototyping code without recompiling all of blip. Don't trust xforms that you
+didn't write yourself.
 
 More information and documentation to come.
 
