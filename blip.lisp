@@ -10,12 +10,12 @@
 (ql:quickload "cl-quickcheck")
 (ql:quickload "drakma")
 (ql:quickload "cl-ppcre")
+(ql:quickload "cl-conspack")
 (ql:quickload "trivial-ssh")
 (ql:quickload "inferior-shell") ; Convenient for synchronous command execution
 (ql:quickload "cl-async") ; Libuv wrapper, convenient for background commands
 (ql:quickload "blackbird") ;promises over cl-async
 (ql:quickload "cl-ncurses")
-(ql:quickload "series")
 (ql:quickload "iterate")
 (ql:quickload "uuid")
 (ql:quickload "ironclad")
@@ -46,8 +46,8 @@
     (assert (equal (type-of x) 'symbol))
     (assert (equal (type-of y) 'symbol))
     ;(assert (equal (type-of ls) 'cons))
-    `(dolist (,x ,ls)
-       (dolist (,y ,ls)
+    `(do-group (,x ,ls)
+       (do-group (,y ,ls)
          ,@body
          ))
     )
@@ -330,7 +330,6 @@
 (defvar blip-self-repo (blip-dir (str-cat blip-repos "blip/")))
 (defvar blip-code (str-cat blip-self-repo "blip.lisp"))
 (defvar blip-env-cfg (blip-file (str-cat blip-env "env-cfg.lisp")))
-(defvar blip-latest-ix-ver 0)
 (defvar github-base-url "https://github.com/")
 (defvar npm-base-url "https://registry.npmjs.com/")
 (defvar gerrit-base-url "https://cr.joyent.us/p/")
@@ -531,7 +530,22 @@
   (format t "~%"))
 
 (defun mk-blip-dirs ()
-  (dolist (d blip-dirs) (mkdir d))
+  (do-group (d blip-dirs) (mkdir d))
+  )
+
+(defun print-row-strs (n ls)
+  (let ((i 0))
+    (do-group (s ls)
+      (cond
+        ((= i n)
+         (print "~%")
+         (setf i 0)
+         )
+        )
+      (print "~d ")
+      (incf i)
+      )
+    )
   )
 
 (defun main-impl (argv)
@@ -549,9 +563,9 @@
                   [--type $type] ~%")
        (format t "index-suffix $path-suffix [up|down] [--page $pg-num] [--force] ~
                   [--type $type] ~%")
-       (format t "index-get-subtree $path [up|down] [--page $pg-num] [--force] ~
+       (format t "index-get-subtrees $path [up|down] [--page $pg-num] [--force] ~
                   [--type $type] ~%")
-       (format t "index-get-subtree-str $path [up|down] [--fmt $formatter] ~
+       (format t "index-get-subtrees-str $path [up|down] [--fmt $formatter] ~
                   [--page $pg-num] [--force] [--type $type] ~%")
        (format t "index-word-count $word [up|down] [--page $pg-num] [--force] ~
                   [--type $type] ~%")
@@ -619,52 +633,52 @@
        )
       ((is-cmd-verb "index-prefix")
        (load-top-env)
-       (in-index-path-cli (print-ln (index-prefix path pov :page page :force force
-                                                  :alt-idx-type alt-idx-type)))
+       (in-index-path-cli (index-prefix path pov :page page :force force
+                                                  :alt-idx-type alt-idx-type))
        )
       ((is-cmd-verb "index-suffix")
        (load-top-env)
-       (in-index-path-cli (print-ln (index-suffix path pov :page page :force force
-                                                  :alt-idx-type alt-idx-type)))
+       (in-index-path-cli (index-suffix path pov :page page :force force
+                                                  :alt-idx-type alt-idx-type))
        )
       ((is-cmd-verb "index-word-count")
        (load-top-env)
-       (in-index-path-cli (print-ln (index-word-count path pov :page page :force force
-                                                      :alt-idx-type alt-idx-type)))
+       (in-index-path-cli (index-word-count path pov :page page :force force
+                                                      :alt-idx-type alt-idx-type))
        )
       ((is-cmd-verb "index-uniq")
        (load-top-env)
-       (in-index-nopath-cli (print-ln (index-uniq pov :page page :force force
-                                                  :alt-idx-type alt-idx-type)))
+       (in-index-nopath-cli (index-uniq pov :page page :force force
+                                                  :alt-idx-type alt-idx-type))
        )
       ((is-cmd-verb "index-path-depth")
        (load-top-env)
-       (in-index-nopath-cli (print-ln (index-path-depth pov :page page :force force
-                                                        :alt-idx-type alt-idx-type)))
+       (in-index-nopath-cli (index-path-depth pov :page page :force force
+                                                        :alt-idx-type alt-idx-type))
        )
       ((is-cmd-verb "index-print")
        (load-top-env)
-       (in-index-nopath-cli (print-ln (index-print pov :page page :force force
-                                                       :alt-idx-type alt-idx-type)))
+       (in-index-nopath-cli (index-print pov :page page :force force
+                                                       :alt-idx-type alt-idx-type))
        )
       ((is-cmd-verb "index-print-sort")
        (load-top-env)
-       (in-index-nopath-cli (print-ln (index-print-sort pov :page page :force force
-                                                       :alt-idx-type alt-idx-type)))
+       (in-index-nopath-cli (index-print-sort pov :page page :force force
+                                                       :alt-idx-type alt-idx-type))
        )
       ((is-cmd-verb "index-build")
        (load-top-env)
        (in-index-nopath-cli (index-build :force force :alt-idx-type alt-idx-type))
        )
-      ((is-cmd-verb "index-get-subtree")
+      ((is-cmd-verb "index-get-subtrees")
        (load-top-env)
-       (in-index-path-cli (print-ln (index-get-subtree path pov :page page :force force
-                                                       :alt-idx-type alt-idx-type)))
+       (in-index-path-cli (index-get-subtrees path pov :page page :force force
+                                                       :alt-idx-type alt-idx-type))
        )
-      ((is-cmd-verb "index-get-subtree-str")
+      ((is-cmd-verb "index-get-subtrees-str")
        (load-top-env)
-       (in-index-path-cli (print-ln (index-get-subtree-str path pov :page page :force force
-                                                           :alt-idx-type alt-idx-type)))
+       (in-index-path-cli (index-get-subtrees-str path pov :page page :force force
+                                                           :alt-idx-type alt-idx-type))
        )
       ((is-cmd-verb "ast-ls-files")
        (load-top-env)
@@ -694,7 +708,7 @@
        )
       ((is-cmd-verb "ast-dump-file")
        (load-top-env)
-       (print-ln
+       (format t "~d~%"
         (char-ls-to-str
          (flatten
            (load-ast (get-env-var 'repo) (car nouns) (get-env-var 'commit)))))
@@ -836,6 +850,7 @@
 (defun append-ls (ls)
   (apply #'append ls))
 
+
 (defclass stack ()
   ((list :initarg :list
          :initform '())
@@ -878,12 +893,36 @@
 (defun stack-set-last (s e)
   (setf (car (slot-value s 'last)) e))
 
-(defun map-if (ls test function)
-  "Maps over a list, ignoring elems that fail a condition"
-  (loop
-    for e in ls
-    when (funcall test e)
-      collect (funcall function e)))
+
+(defun elem (arr i)
+  (cond
+    ((>= i (length arr))
+     nil)
+    ((and t)
+     (elt arr i))
+    )
+  )
+
+
+(defun create-list-bindings (names-arr list)
+  (let ((ret '()))
+    (dotimes (i (length names-arr))
+      (pushr! ret (list (elem names-arr i) `(car (nthcdr (+ ,i) ,list))))
+      )
+    ret
+    )
+  )
+
+(defmacro! do-cons (args &body body)
+  (assert (= (length args) 2))
+  (let ((e (car args))
+        (l (cadr args))
+        )
+    `(do ((,e ,l (cdr ,e))) ((not ,e) ,e)
+       ,@body
+       )
+    )
+  )
 
 (defun head-n (list n)
   "Get the first n elems of a list"
@@ -899,10 +938,7 @@
                (iter:for x from 1 to n)
                (setq ls (cdr ls)))
              ls)
-             nil))
-
-(defun get-nth-page (ls n pagesz)
-  (head-n (popl-n ls (* n pagesz)) pagesz))
+      nil))
 
 (defmacro! popl-n! (ls n)
   "Same as popl-n but overwrites the list"
@@ -935,6 +971,37 @@
   "Same as popr but overwrite the list"
   `(setf ,ls (popr ,ls)))
 
+(defmacro! do-group (args &body body)
+  "Just like dolist, except it allows arbitrary look-ahead"
+  (assert (>= (length args) 2))
+  (let* ((e (gensym))
+         (es (coerce (popr args) 'vector))
+         (g (car (last args)))
+         (i (gensym)))
+    (assert (symbolp e))
+    `(progn
+       (do-cons (,e ,g)
+         (let (,@(create-list-bindings `,es `,e))
+           ,@body
+           )
+         )
+       )
+    )
+  )
+
+
+(defun map-if (ls test function)
+  "Maps over a list, ignoring elems that fail a condition"
+  (loop
+    for e in ls
+    when (funcall test e)
+      collect (funcall function e)))
+
+
+(defun get-nth-page (ls n pagesz)
+  (head-n (popl-n ls (* n pagesz)) pagesz))
+
+
 
 (defun ngrams-aux (acc n list)
   (cond ((< (length list) n)
@@ -949,7 +1016,7 @@
 (defun quantize (list)
   (let ((tbl (make-hash-table :test #'equal))
         (list-tbl '()))
-    (dolist (e list)
+    (do-group (e list)
       (incf (gethash e tbl 0))
       )
     (maphash #'(lambda (k v)
@@ -1092,6 +1159,7 @@
            (go again))
           ))
      (stack-list stack)))
+
 
 (def-blanks-aux blanks-aux is-blank)
 (def-blanks-aux cl-blanks-aux is-cl-blank)
@@ -1348,7 +1416,6 @@
                                 (or (and (CHAR= f #\') (CHAR= l #\'))
                                     (and (CHAR= f #\") (CHAR= l #\")))))))
 
-; TODO: return a pair of consumed and tail
 (defmacro! is-bcmt-end ()
   `(and (CHAR= head #\*) (CHAR= (car tail) #\/)))
 
@@ -2555,7 +2622,7 @@
         (xformer nil)
         (body '())
         )
-    (dolist (n kvps)
+    (do-group (n kvps)
       (pushr! body (car n))
       (cond
         ((equal 'descend (cadr n))
@@ -2681,7 +2748,7 @@
   "Detects mbr-chains that contain words and end in a binding"
   (let ((fail nil))
     (if (and (is-js-mbr-chain ls) (is-js-binding (car (last ls))))
-        (dolist (e ls)
+        (do-group (e ls)
           (if (not (or (is-blank-group e)
                        (is-punctuation-group e)
                        (is-word-group e)
@@ -2793,12 +2860,12 @@
   )
 
 (defun walk-tree (ls test work path walk &key backoff-if)
-  (if (funcall test (car ls))
-      (funcall work (car ls) path walk))
-  (if (and (car ls) (listp (car ls)) (optfuncall backoff-if (car ls)))
+  (if (and (listp ls) (funcall test (car ls)))
+      (funcall work (car ls) path (pushr walk 'd)))
+  (if (and (listp ls) (car ls))
       (walk-tree (car ls) test work (pushr path (car ls))
                  (pushr walk 'd) :backoff-if backoff-if))
-  (if (and (cdr ls))
+  (if (and (listp ls) (cdr ls))
       (walk-tree (cdr ls) test work path
                  (pushr walk 'r) :backoff-if backoff-if)))
 
@@ -2901,9 +2968,9 @@
 (defun set-js-obj-key (ls key)
   (assert (is-js-obj-lit-rec ls))
   (assert (or (stringp key) (listp key)))
-  (if (stringp str)
+  (if (stringp key)
       (setf (car ls) (str-to-char-ls key)))
-  (if (listp str)
+  (if (listp key)
       (setf (car ls) key))
   )
 
@@ -3084,7 +3151,7 @@
            ((directory-pathname-p name)
             (when (and directories (funcall test name))
               (funcall fn name))
-            (dolist (x (list-directory name)) (walk x)))
+            (do-group (x (list-directory name)) (walk x)))
            ((funcall test name) (funcall fn name)))))
                 (walk (pathname-as-directory dirname))))
 
@@ -3110,6 +3177,17 @@
       )
     (values form empty)))
 
+(defun bin-to-form-impl (input)
+  (let* ((form nil)
+         (empty nil))
+    (cond
+      ((is-file-p input)
+       (setf form (cpk:decode-file input))
+       (if (not form)
+           (setf empty t))
+       )
+      )
+    (values (car form) empty)))
 
 (defun file-to-forms-impl (input)
   (let* ((in (open input :if-does-not-exist nil))
@@ -3148,6 +3226,20 @@
     (close out)
   ))
 
+(defun form-to-bin-impl (form output)
+  (let ((out nil)
+        (pathls (str-split "/" output)))
+    (if (> (length pathls) 1)
+        (mkdir (apply #'str-cat (intersperse (popr pathls) "/")))
+        )
+    (setf out (open output :direction :output :if-exists :supersede
+                           :element-type '(unsigned-byte 8)
+                           :if-does-not-exist :create))
+    (cpk:encode form :stream out)
+    (finish-output out)
+    (close out)
+    ))
+
 (defun str-to-file (str output)
   (let ((out (open output :direction :output :if-exists :supersede
                           :if-does-not-exist :create)))
@@ -3164,8 +3256,14 @@
 (defun file-to-char-ls (input)
   (file-to-char-ls-impl input))
 
+(defun bin-to-form (input)
+  (bin-to-form-impl input))
+
 (defun file-to-form (input)
   (file-to-form-impl input))
+
+(defun form-to-bin (form output)
+  (form-to-bin-impl form output))
 
 (defun form-to-file (form output)
   (form-to-file-impl form output))
@@ -3183,14 +3281,14 @@
 (defun c-name-to-pathname (ls)
   (cond
     ((is-c-fcall ls)
-     (concatenate 'list (get-fcall-name ls) "()"))
+     (concatenate 'string (get-fcall-name ls) "()"))
     ((is-c-fdef ls)
-     (concatenate 'list (get-c-fdef-name ls) "{}"))
+     (concatenate 'string (get-c-fdef-name ls) "{}"))
     ))
 
 (defun get-js-mbr-nested-words (ls)
   (let ((words '()))
-    (dolist (e ls)
+    (do-group (e ls)
       (cond
         ((is-word-group e)
          (pushr! words e)
@@ -3204,23 +3302,23 @@
 (defun js-name-to-pathname (ls)
   (cond
     ((is-js-flat-ctl-stmt ls)
-     (concatenate 'list (get-js-ctl-name ls) ";"))
+     (concatenate 'string (get-js-ctl-name ls) ";"))
     ((is-js-curly-ctl-stmt ls)
-     (get-js-ctl-name ls))
+     (char-ls-to-str (get-js-ctl-name ls)))
     ((is-js-do-while-stmt ls)
-     (str-to-char-ls "do"))
+      "do")
     ((is-js-fcall ls)
-     (concatenate 'list (get-fcall-name ls) "()"))
+     (concatenate 'string (get-fcall-name ls) "()"))
     ((is-js-fdef ls)
-     (concatenate 'list (get-js-fdef-name ls) "{}"))
+     (concatenate 'string (get-js-fdef-name ls) "{}"))
     ((is-js-fdef-binding ls)
-     (concatenate 'list (get-js-fbind-name ls) "="))
+     (concatenate 'string (get-js-fbind-name ls) "="))
     ((is-js-var-binding ls)
-     (concatenate 'list (get-js-vbind-name ls) "="))
+     (concatenate 'string (get-js-vbind-name ls) "="))
     ((is-js-obj-lit-rec ls)
-     (concatenate 'list (get-js-obj-key ls) ":"))
+     (concatenate 'string (get-js-obj-key ls) ":"))
     ((is-js-mbr-chain-word-bind ls)
-     (get-js-mbr-nested-words ls))
+     (char-ls-to-str (get-js-mbr-nested-words ls)))
     ((and t)
      (assert nil))))
 
@@ -3238,7 +3336,7 @@
   (let* ((prev (car ls))
          (count 1)
          (acc '()))
-    (dolist (e (cdr ls))
+    (do-group (e (cdr ls))
       (cond
         ((equal e prev)
          (incf count))
@@ -3255,41 +3353,167 @@
   (if (= (length ls) 0)
       (return-from unfold-list nil))
   (let* ((unfls '()))
-    (dolist (p ls)
+    (do-group (p ls)
       (dotimes (z (car p))
         (pushr! unfls (cadr p))))
     unfls
   ))
 
-(defun mk-js-path-index (ast idx-bool)
-  ;; We keep the non-str lists around for backwards compatibility.
-  ;; Removed the code that populates these lists because these lists were
-  ;; unused, but consumed tons of space.
-  ;; Same holds for all non-JS variants of this code.
-  (let ((str-stkls '())
-        (rev-str-stkls '())
-        )
-    (values
-     (lambda (x y z)
-       (pushr! str-stkls (list (js-refine-path (pushr y x) idx-bool) (fold-list z)))
-       (pushr! rev-str-stkls (list (js-refine-path (reverse (pushr y x)) idx-bool)
-                                   (fold-list z)))
-       )
-     (lambda () (list str-stkls rev-str-stkls ast blip-latest-ix-ver))
-    )))
+(defclass indexer ()
+  ((str-stkls :initarg :str-stkls :initform '() :accessor str-stkls)
+   (ast :initarg :ast :initform '() :accessor ast)
+   (ast-sha2 :initarg :ast-sha2 :initform nil :accessor ast-sha2)
+   (test-name :initarg :test-name :initform :funcs :accessor test-name))
+  )
 
-(defun mk-c-path-index (ast idx-bool)
-  (let ((str-stkls '())
-        (rev-str-stkls '())
-        )
-    (values
-     (lambda (x y z)
-       (pushr! str-stkls (list (c-refine-path (pushr y x) idx-bool) (fold-list z)))
-       (pushr! rev-str-stkls (list (c-refine-path (reverse (pushr y x)) idx-bool)
-                                   (fold-list z)))
+(defmethod indexer-reset ((ix indexer))
+  (setf (str-stkls ix) '())
+  (setf (ast ix) '())
+  (setf (ast-sha2 ix) nil)
+  )
+
+(defclass js-indexer (indexer)
+  ((test :initarg :test :initform #'is-js-indexable-funcs :accessor test))
+  )
+
+(defclass c-indexer (indexer)
+  ((test :initarg :test :initform #'is-c-indexable-funcs :accessor test))
+  )
+
+(defmethod name-to-test ((ix js-indexer) &optional test-name)
+  (if (not test-name)
+      (setf test-name (test-name ix)))
+  (cond
+    ((equal test-name :funcs)
+     #'is-js-indexable-funcs)
+    ((equal test-name :funcs-conds)
+     #'is-js-indexable-conds)
+    ((equal test-name :binds)
+     #'is-js-indexable-binds)
+    ((and t)
+     (assert nil))
+    )
+  )
+
+(defmethod name-to-test ((ix c-indexer) &optional test-name)
+  (if (not test-name)
+      (setf test-name (test-name ix))
+      (setf (test-name ix) test-name))
+  (cond
+    ((equal test-name :funcs)
+     #'is-c-indexable-funcs)
+    ((equal test-name :funcs-conds)
+     #'is-c-indexable-funcs)
+    ((and t)
+     (assert nil))
+    )
+  )
+
+(defmethod test-name-str ((ix indexer))
+  (symbol-name (test-name ix)))
+
+(defmethod set-test ((ix indexer) test-name)
+  (setf (test-name ix) test-name)
+  (setf (test ix) (name-to-test ix test-name)))
+
+(defmethod refine-path ((ix js-indexer) path)
+  (map 'list #'js-name-to-pathname (remove-if-not (test ix) path)))
+
+(defmethod refine-path ((ix c-indexer) path)
+  (map 'list #'c-name-to-pathname (remove-if-not (test ix) path)))
+
+(defmethod update ((ix indexer) node path walk)
+  (pushr! (str-stkls ix) (list (refine-path ix (pushr path node))
+                               (fold-list walk)))
+  )
+
+(defmethod listify-index ((ix indexer))
+  "Takes object and listifies it so we can just form-to-file it"
+  (list (str-stkls ix) (ast-sha2 ix)))
+
+(defmethod build-index ((ix indexer))
+  (let ((up #'(lambda (x y z) (update ix x y z))))
+    (walk-tree (ast ix) (test ix) up '() '())
+    (listify-index ix)
+    )
+  )
+
+(defun bin-file-to-idx (input)
+  (let* ((form nil)
+         (empty nil))
+    (cond
+      ((is-file-p input)
+       (setf form (cpk:with-index (l r) (cpk:decode-file input)))
+       (if (not form)
+           (setf empty t))
        )
-     (lambda () (list str-stkls rev-str-stkls ast blip-latest-ix-ver))
-     )))
+      )
+    (values (car form) empty)))
+
+(defun idx-to-bin-file (form output)
+  (let ((out nil)
+        (pathls (str-split "/" output)))
+    (if (> (length pathls) 1)
+        (mkdir (apply #'str-cat (intersperse (popr pathls) "/")))
+        )
+    (setf out (open output :direction :output :if-exists :supersede
+                           :element-type '(unsigned-byte 8)
+                           :if-does-not-exist :create))
+    (cpk:with-index (l r) (cpk:encode form :stream out))
+    (finish-output out)
+    (close out)
+    ))
+
+(defun idx-to-file (form output)
+  ;(form-to-file form output)
+  (idx-to-bin-file form output)
+  )
+
+(defun file-to-idx (input)
+  ;(file-to-form input)
+  (bin-file-to-idx input)
+  )
+
+(defmethod cache-index ((ix indexer) repo file commit ast ast-sha2)
+  (indexer-reset ix)
+  (if (not ast)
+      (setf ast (load-ast repo file commit))
+      )
+  (setf (ast ix) ast)
+  (if (not ast-sha2)
+      (setf ast-sha2 (load-ast-sha2 repo file commit))
+      )
+  (setf (ast-sha2 ix) ast-sha2)
+  (let* ((fcommit (git-file-latest-commit-until repo file commit))
+         (outdir (str-cat blip-repo-meta repo "/root/" file "/" fcommit "/path-index/"))
+         (out (str-cat outdir (test-name-str ix))))
+    (idx-to-file (build-index ix) out))
+  )
+
+(defmethod load-index ((ix indexer) repo file commit &optional ast)
+  (let* ((fcommit (git-file-latest-commit-until repo file commit))
+         (in (str-cat blip-repo-meta repo "/root/" file "/" fcommit "/path-index/"
+                      (test-name-str ix)))
+         (ret (file-to-idx in)))
+    ret
+    )
+  )
+
+(defmethod index-paths ((ix indexer) repo file commit &optional ast &key force)
+  (expand-commit! repo commit)
+  (let* ((loaded-idx (if (not force) (load-index ix repo file commit ast) nil))
+         (ast-sha2 (load-ast-sha2 repo file commit)))
+    (cond
+      ((or (not loaded-idx)
+           (not (equalp (path-index-ast-sha2 loaded-idx)
+                       ast-sha2)))
+       (cache-index ix repo file commit ast ast-sha2)
+       (setf loaded-idx (load-index ix repo file commit ast))
+       )
+      )
+    loaded-idx
+    )
+  )
 
 (defun path-index-file (ls)
   (car ls))
@@ -3297,14 +3521,20 @@
 (defun path-index-str (ls)
   (car (cadr ls)))
 
+(defun reverse-paths (pairs)
+  (let ((rev-pairs '()))
+    (do-group (e pairs)
+      (pushr! rev-pairs (list (reverse (car e)) (cadr e)))
+      )
+    rev-pairs
+    )
+  )
+
 (defun path-index-revstr (ls)
-  (cadr (cadr ls)))
+  (reverse-paths (path-index-str ls)))
 
-(defun path-index-ast (ls)
-  (caddr (cadr ls)))
-
-(defun path-index-ver (ls)
-  (cadddr (cadr ls)))
+(defun path-index-ast-sha2 (ls)
+  (cadr ls))
 
 (defun path-index-setroot (ls)
   (pushl! (car ls) (list '((#\/)) nil))
@@ -3347,71 +3577,6 @@
 (defun c-idx-type-to-name (type)
   (js-idx-type-to-name type))
 
-(defmacro! index-all-x-paths-impl (name type-to-test mk-x-path-index)
-  `(defun ,name (ast &optional type)
-     (let ((idx-bool (,type-to-test type)))
-       (assert idx-bool)
-       (multiple-value-bind (update-indices get-indices)
-           (,mk-x-path-index ast idx-bool)
-         (walk-tree ast idx-bool update-indices '() '())
-         (funcall get-indices)
-       ))
-     )
-  )
-
-(index-all-x-paths-impl index-all-js-paths-impl js-idx-type-to-test mk-js-path-index)
-(index-all-x-paths-impl index-all-c-paths-impl c-idx-type-to-test mk-c-path-index)
-
-(defmacro! cache-x-path-index (name indexer type-namer)
-  `(defun ,name (repo file commit &optional type ast)
-     (if (not ast)
-         (setf ast (load-ast repo file commit)))
-     (let* ((type-nm (,type-namer type))
-            (fcommit (git-file-latest-commit-until repo file commit))
-            (outdir (str-cat blip-repo-meta repo "/root/" file "/" fcommit "/path-index/"))
-            (out (str-cat outdir type-nm)))
-       (mkdir outdir)
-       (form-to-file (,indexer ast type) out))))
-
-(cache-x-path-index cache-js-path-index index-all-js-paths-impl js-idx-type-to-name)
-(cache-x-path-index cache-c-path-index index-all-c-paths-impl c-idx-type-to-name)
-
-(defmacro! load-x-path-index (name type-namer)
-  `(defun ,name (repo file commit &optional type ast)
-     (let* ((type-nm (,type-namer type))
-            (fcommit (git-file-latest-commit-until repo file commit))
-            (in (str-cat blip-repo-meta repo "/root/" file "/" fcommit "/path-index/"
-                         type-nm))
-            (ix (file-to-form in)))
-       ix
-       )))
-
-(load-x-path-index load-js-path-index js-idx-type-to-name)
-(load-x-path-index load-c-path-index c-idx-type-to-name)
-
-(defun is-latest-ix (ix)
-  (and (numberp (cadddr ix)) (= (cadddr ix) blip-latest-ix-ver)))
-
-(defmacro! index-all-x-paths (name cacher loader)
-  `(defun ,name (repo file commit &optional type ast &key force)
-     (expand-commit! repo commit)
-     (let* ((ix (if (not force) (,loader repo file commit type ast) nil)))
-       (cond
-         ((or (not ix) (not (is-latest-ix ix)))
-          (,cacher repo file commit type ast)
-          (setf ix (,loader repo file commit type ast)))
-         )
-       ix
-       ))
-  )
-
-(index-all-x-paths index-all-js-paths cache-js-path-index load-js-path-index)
-(index-all-x-paths index-all-c-paths cache-c-path-index load-c-path-index)
-
-(defun test-index-js (&optional force)
-  (index-all-js-paths "github/davepacheco/node-vasync" "examples/barrier-basic.js"
-                      :head :funcs nil :force force))
-
 (defun count-node-in-ast (test idx-bool ast &key deep)
   (let ((count 0))
     (walk-tree ast test
@@ -3442,7 +3607,7 @@
     (cond
       ((equal agg 'frequency)
        (setf ddl (remove-duplicates list :test dedup))
-       (dolist (e ddl)
+       (do-group (e ddl)
          (pushr! cl (list e (count e list :test dedup)))
          )
        (stable-sort cl #'< :key #'cadr)
@@ -3462,7 +3627,7 @@
   `(defun ,name (repo file commit)
      (let* ((fcommit (git-file-latest-commit-until repo file commit))
             (in (str-cat blip-repo-meta repo "/root/" file "/" fcommit ,suf)))
-       (file-to-form in)
+       (bin-to-form in)
        )
      )
   )
@@ -3491,7 +3656,7 @@
       (if (not ast)
           (assert ast))
       (mkdir outdir)
-      (form-to-file (,list-impl ast t) out)
+      (form-to-bin (,list-impl ast t) out)
       )
     )
   )
@@ -3556,7 +3721,7 @@
 
 (defun test-ls-js (&optional count force)
   (js-list-fcalls "github/davepacheco/node-vasync" "examples/barrier-basic.js"
-                      :head count :force force))
+                      'head count :force force))
 
 (defun hash-table-to-alist (table)
   (let ((alist nil))
@@ -3650,7 +3815,7 @@
   (walk-tree ast #'is-jsarr #'(lambda (e s w) (print (flatten e))) '() '()))
 
 (defun test-arr-pr ()
-  (print-all-arrays (load-ast "github/joyent/sdc-docker" "lib/moray.js" :head)))
+  (print-all-arrays (load-ast "github/joyent/sdc-docker" "lib/moray.js" 'head)))
 
 (defun get-require-arg0 (ast)
   (let ((args '()))
@@ -3681,7 +3846,7 @@
   (inter-aux '() ls e not-last))
 
 (defun fmt-path (path)
-  (reduce #'str-cat (intersperse (map 'list #'pathname-to-string path) "/")))
+  (reduce #'str-cat (intersperse path "/")))
 
 (defun fmt-paths (pathls)
   (map 'list #'fmt-path pathls))
@@ -3715,7 +3880,14 @@
   )
 
 (defun match-path (p1 p2)
-  (equal p1 p2))
+  (cond
+    ((equal p1 p2)
+     ;(format t "p1: ~A ~% p2: ~A ~%" p1 p2)
+     t)
+    ((and t)
+     nil)
+    )
+  )
 
 (defun uniq-path-aux (stack pairs fmt)
   (let ((prev (stack-last stack)))
@@ -3774,20 +3946,24 @@
 (defun test-pbd ()
   (paths-by-depth (test-docker-create-index) :pov nil :fmt t))
 
-(defun auto-walk-tree-aux (tree walk)
-  (cond
-    ((not walk)
-     (car tree))
-    ((eql 'd (car walk))
-     (auto-walk-tree-aux (car tree) (cdr walk)))
-    ((eql 'r (car walk))
-     (auto-walk-tree-aux (cdr tree) (cdr walk)))
-    ((and t)
-     (assert nil))
-  ))
-
 (defun auto-walk-tree (tree walk)
-  (auto-walk-tree-aux tree walk)
+  (let ((cur tree))
+    (do-group (m walk)
+      (cond
+        ((eql 'd m)
+         (if (listp cur)
+             (setf cur (car cur))
+             )
+         )
+        ((eql 'r m)
+         (if (listp cur)
+             (setf cur (cdr cur))
+             )
+         )
+        )
+      )
+    cur
+    )
   )
 
 (defun splice-subtree-aux (tree walk subtree)
@@ -3807,7 +3983,7 @@
   tree ;;; XXX VERIFY that this contains a spliced-in subtree
   )
 
-(defun get-path-subtree (path index &optional pov)
+(defun get-path-subtrees (path index ast &optional pov)
   (let* ((pairs nil))
     (if (or (not pov) (equal pov :down))
         (setf pairs (path-index-str index))
@@ -3817,14 +3993,13 @@
                  #'(lambda (p)
                      (cond
                        ((string= path "/")
-                        (path-index-ast index))
+                        ast)
                        ((match-path path (fmt-path (car p)))
-                        (auto-walk-tree (path-index-ast index)
-                                        (unfold-list (cadr p))))))
+                        (auto-walk-tree ast (unfold-list (cadr p))))))
                  pairs))))
   )
 
-(defun get-path-walk (path index &optional pov)
+(defun get-path-walk (path index ast &optional pov)
   (let* ((pairs nil))
     (if (or (not pov) (equal pov :down))
         (setf pairs (path-index-str index))
@@ -3834,17 +4009,16 @@
                       #'(lambda (p)
                           (cond
                             ((string= path "/")
-                             (list (path-index-ast index) '()))
+                             '())
                             ((match-path path (fmt-path (car p)))
-                             (list (path-index-ast index)
-                                   (unfold-list (cadr p))))))
+                             (unfold-list (cadr p)))))
                       pairs))))
   )
 
-(defun get-path-subtree-str (path index &optional pov)
-  (map 'list #'ast-to-str (get-path-subtree path pov)))
+(defun get-path-subtrees-str (path index ast &optional pov)
+  (map 'list #'ast-to-str (get-path-subtrees path index ast pov)))
 
-(defun get-path-node-count (test index idx-bool &optional pov &key zero pre)
+(defun get-path-node-count (test index ast idx-bool &optional pov &key zero pre)
   (let* ((pairs nil))
     (if (or (not pov) (equal pov :down))
         (setf pairs (path-index-str index))
@@ -3854,9 +4028,9 @@
                                ;;; TODO use get-subtree here
                    #'(lambda (p)
                        (let ((count (count-node-in-ast test idx-bool
-                                                       (get-path-subtree
+                                                       (get-path-subtrees
                                                         (fmt-path (car p))
-                                                        index pov) :deep t)))
+                                                        index ast pov) :deep t)))
                          (if (and (or (and zero (= 0 count)) (> count 0))
                                   (or (not pre) (is-str-prefix pre (fmt-path (car p)))))
                              (list (fmt-path (car p)) count))))
@@ -4195,7 +4369,7 @@
 
 (defun gen-chars (&rest cs)
   (let* ((res '()))
-    (dolist (c cs)
+    (do-group (c cs)
       (cond
         ((characterp c)
          (pushr! res c))
@@ -4512,11 +4686,11 @@
 (defun cache-svc-user-repo-list (svc user)
   (form-to-file (fetch-user-repo-list user) (str-cat blip-repos-index svc "/" user)))
 
-(setf git-jobs 0)
+(defvar git-jobs 0)
 
 (defun update-git-cmd-status (proc stat sig)
-  (print "stat")
-  (print stat)
+  ;(print "stat")
+  ;(print stat)
   (decf git-jobs)
   (if (= git-jobs 0)
       (cl-async:exit-event-loop)))
@@ -4825,7 +4999,7 @@
 
 (defun cache-git-log-all-branches (repo)
   (let ((branches (git-ls-branches repo)))
-    (dolist (b branches) (cache-git-log repo b))))
+    (do-group (b branches) (cache-git-log repo b))))
 
 (defun git-refs-aux (stack head tail)
   (tagbody
@@ -4921,7 +5095,7 @@
    (extract-git-refs (load-git-remotes repo)))))
 
 (defun fetch-git-remotes (repo)
-  (dolist (targ (fetchable-remote-targs repo))
+  (do-group (targ (fetchable-remote-targs repo))
     (git-fetch-remote repo targ)))
 
 (defun load-git-log (repo &optional branch)
@@ -4959,7 +5133,7 @@
 
 (defun build-ast-dir (repo)
   (pushdir (str-cat blip-asts repo))
-  (dolist (f (git-show-ftree-all-time repo))
+  (do-group (f (git-show-ftree-all-time repo))
     (mkdir (str-cat (cwd) "/" f)))
   (popdir)
   )
@@ -4968,7 +5142,7 @@
   (let* ((dir (str-cat blip-repo-meta repo "/root")))
     (mkdir dir)
     (pushdir dir)
-    (dolist (f (git-show-ftree-all-time repo))
+    (do-group (f (git-show-ftree-all-time repo))
       (mkdir (str-cat (cwd) "/" f))
       )
     (popdir)
@@ -5103,7 +5277,7 @@
 
 (defun is-misdeleted (amends file)
   (let ((ret nil))
-    (dolist (a amends)
+    (do-group (a amends)
       (if (and (equal (car a) 'misdeletion)
                (equal (cadr a) file))
           (setf ret t))
@@ -5138,12 +5312,16 @@
                          ((and (is-file-p full-src-path)
                                (or (and force (file-exists-p fullpath))
                                    (not (file-exists-p fullpath))))
-                          (if (or (not whitelist)
-                                  (member file whitelist :test #'equal))
-                              (form-to-file
-                               (funcall parser
-                                        (file-to-char-ls full-src-path))
-                               fullpath)))
+                          (cond
+                            ((or (not whitelist)
+                                 (member file whitelist :test #'equal))
+                             (form-to-bin
+                              (funcall parser
+                                       (file-to-char-ls full-src-path))
+                              fullpath)
+                             (form-to-bin
+                              (sha256-file fullpath)
+                              (str-cat fullpath "_sha2")))))
                          ((not (is-file-p full-src-path))
                           (assert nil)
                          ))
@@ -5154,7 +5332,7 @@
     ))
 
 (defun expand-commit (repo commit)
-  (if (equal commit :head)
+  (if (equal commit 'head)
       (git-head-commit repo)
       commit))
 
@@ -5182,8 +5360,16 @@
   (let* ((revid (git-file-latest-commit-until repo file commit)))
     (str-cat blip-asts repo "/" file "/" revid)))
 
+(defun ast-sha2-path (repo file commit)
+  (expand-commit! repo commit)
+  (let* ((revid (git-file-latest-commit-until repo file commit)))
+    (str-cat blip-asts repo "/" file "/" revid "_sha2")))
+
 (defun load-ast (repo file commit)
-  (file-to-form (ast-path repo file commit)))
+  (bin-to-form (ast-path repo file commit)))
+
+(defun load-ast-sha2 (repo file commit)
+  (bin-to-form (ast-sha2-path repo file commit)))
 
 (defun js-path-cat-aux (str ls files)
   (let* ((dstr (str-cat str (car ls) "/"))
@@ -5384,31 +5570,10 @@
                              :force t :suf ".js" :parser #'js-to-ast)
     ))
 
-(defun test-docker-create-index ()
-  (list "lib/backends/sdc/containers.js"
-        (pipeline (load-ast "github/joyent/sdc-docker"
-                            "lib/backends/sdc/containers.js"
-                            :head)
-                  #'index-all-js-paths)))
-
 (defun test-mooremachine-ast ()
   (load-ast "github/joyent/node-mooremachine"
             "lib/fsm.js"
-            :head))
-
-(defun test-mooremachine-create-index ()
-  (list "lib/fsm.js"
-        (pipeline (load-ast "github/joyent/node-mooremachine"
-                            "lib/fsm.js"
-                            :head)
-                  #'index-all-js-paths)))
-
-(defun test-mike-create-index ()
-  (list "sdb/libsdc/libsdb_lwrap.c"
-        (pipeline (load-ast "github/sdimitro/minions"
-                            "sdb/libsdb/libsdb_lwrap.c"
-                            :head)
-                  #'index-all-c-paths)))
+            'head))
 
 (defun test-docker-print-index ()
   (print-js-paths (test-docker-create-index)))
@@ -5417,7 +5582,7 @@
   (print-js-paths (test-mooremachine-create-index)))
 
 (defun test-mooremachine-get-subtree (path &optional pov)
-  (map 'list #'ast-to-str (get-path-subtree path (test-mooremachine-create-index) pov)))
+  (map 'list #'ast-to-str (get-path-subtrees path (test-mooremachine-create-index) pov)))
 
 (defun test-mike-print-index ()
   (print-js-paths (test-mike-create-index)))
@@ -5426,10 +5591,10 @@
   (print-js-paths-raw (test-docker-create-index)))
 
 (defun test-docker-get-subtree (path &optional pov)
-  (map 'list #'ast-to-str (get-path-subtree path (test-docker-create-index) pov)))
+  (map 'list #'ast-to-str (get-path-subtrees path (test-docker-create-index) pov)))
 
 (defun test-mike-get-subtree (path &optional pov)
-  (map 'list #'ast-to-str (get-path-subtree path (test-mike-create-index) pov)))
+  (map 'list #'ast-to-str (get-path-subtrees path (test-mike-create-index) pov)))
 
 (defun test-docker-prefix (pref &optional pov)
   (get-path-with-prefix pref (test-docker-create-index) pov))
@@ -5467,22 +5632,22 @@
 (defun test-docker-word-count ()
   (format-alist (js-word-count
                  (load-ast "github/joyent/sdc-docker"
-                           "lib/backends/sdc/containers.js" :head))))
+                           "lib/backends/sdc/containers.js" 'head))))
 
 (defun test-docker-fcall-count ()
   (format-alist (js-fcall-count
                  (load-ast "github/joyent/sdc-docker"
-                           "lib/backends/sdc/containers.js" :head))))
+                           "lib/backends/sdc/containers.js" 'head))))
 
 (defun test-docker-fcall-params-count ()
   (format-alist (js-fcall-params-count
                  (load-ast "github/joyent/sdc-docker"
-                           "lib/backends/sdc/containers.js" :head))))
+                           "lib/backends/sdc/containers.js" 'head))))
 
 (defun test-docker-fdef-count ()
   (format-alist (js-fdef-count
                  (load-ast "github/joyent/sdc-docker"
-                           "lib/backends/sdc/containers.js" :head))))
+                           "lib/backends/sdc/containers.js" 'head))))
 
 (defun test-docker-fcommit-count ()
   (format-alist (file-commit-count (load-git-log "github/joyent/sdc-docker"))))
@@ -5491,7 +5656,7 @@
   (let* ((repo "github/joyent/sdc-docker")
          (file "lib/backends/sdc/containers.js")
          (reqs (get-require-arg0 (load-ast repo file
-                                           :head)))
+                                           'head)))
          (exp-reqs (map 'list #'(lambda (r) (expand-path file r :when-module nil)) reqs)))
 
     (map 'list #'(lambda (r) (list file r)) (remove-if #'not exp-reqs))
