@@ -27,6 +27,7 @@
   "Shorthand for lol:defmacro"
   `(lol:defmacro! ,@body))
 
+
 (defun repeat (x n)
   (let ((ls '())
         (i 0))
@@ -819,8 +820,16 @@
 
 (defun main ()
   "The main entry point for this program."
+  (init-vdefun-stream)
   (let* ((argv sb-ext:*posix-argv*))
-    (main-impl argv))
+    (main-impl argv)
+    (cond
+      ((and blip-vdefun-stream)
+       (flush-vdefun-log)
+       (finish-output blip-vdefun-stream)
+       )
+      )
+    )
   )
 
 (defun exec-self ()
@@ -856,10 +865,15 @@
          :initform '())
    (last :initarg :last
          :initform nil)
+   (length :initarg :length
+           :initform 0)
   ))
 
 (defun stack-list (s)
   (slot-value s 'list))
+
+(defun stack-length (s)
+  (slot-value s 'length))
 
 (defun stack-pushr (s e)
   (if (slot-value s 'list)
@@ -868,7 +882,8 @@
         (setf (slot-value s 'last) (cdr (slot-value s 'last))))
       (progn
         (setf (slot-value s 'list) (list e))
-        (setf (slot-value s 'last) (slot-value s 'list)))))
+        (setf (slot-value s 'last) (slot-value s 'list))))
+  (incf (slot-value s 'length)))
 
 (defun stack-last-until (s test)
   (let ((last (stack-last s))
@@ -903,6 +918,220 @@
     )
   )
 
+;;; TODO set a max-length that triggers a flush, this way we won't slow
+;;; performance via creeping memory exhaustion.
+(defvar blip-vd-logs (blip-dir (str-cat blip-meta "logs/")))
+(defvar blip-vdefun-log-max 100)
+(defvar blip-vdefun-enabled t)
+(defvar blip-vdefun-log (make-instance 'stack))
+(defvar blip-vdefun-stream )
+
+(defun init-vdefun-stream ()
+  (cond
+    ((and blip-vdefun-enabled)
+     (setf blip-vdefun-stream
+           (open (str-cat blip-vd-logs
+                          (write-to-string (get-universal-time)))
+                 :direction :output :if-exists :supersede
+                 :if-does-not-exist :create)
+           ))))
+
+(defun reset-vdefun-log ()
+  (setf blip-vdefun-log nil)
+  (setf blip-vdefun-log (make-instance 'stack)))
+
+(defun flush-vdefun-log ()
+  "This function serializes the log to a stream, and resets the data
+   structure. This function 'flushes' the data structure from memory into the
+   stream. The stream will periodically get drained into a file. Must call
+   finish-output at the end of the program's lifetime to force the last few
+   straggler bytes out onto disk."
+  (cond
+    ((and blip-vdefun-stream (stack-list blip-vdefun-log))
+     (print (stack-list blip-vdefun-log) blip-vdefun-stream)
+     ;(finish-output blip-vdefun-stream)
+     )
+    )
+  (reset-vdefun-log)
+  )
+
+(defun load-vdefun-log (time)
+  (apply #'append (file-to-forms-impl (str-cat blip-vd-logs (write-to-string time))))
+  )
+
+(defun vdefun-count-names (time)
+  (let ((log (load-vdefun-log time))
+        )
+    (quantize (mapcar #'(lambda (r)
+                          (caddr r)
+                          )
+                      log))
+    )
+  )
+
+(defun vdefun-count-types (time)
+  (let ((log (load-vdefun-log time))
+        )
+    (quantize (mapcar #'(lambda (r)
+                          (cadr r)
+                          )
+                      log))
+    )
+  )
+
+(defun vdefun-func-time (time)
+  (let ((log (load-vdefun-log time))
+        (dict (make-hash-table :test #'equal))
+        (stack '())
+        (target nil)
+        (ret '())
+        )
+    (do-group (r log)
+      (when (equal (car r) 'e)
+        (pushr! stack (list (caddr r) (cadddr r)))
+        )
+      (when (equal (car r) 'r)
+        (setf target (car (last stack)))
+        (incf (gethash (car target) dict 0) (- (cadddr r) (cadr target)))
+        (popr! stack)
+        )
+      )
+    (maphash #'(lambda (k v)
+                 (pushr! ret (list k v))
+                 )
+             dict
+             )
+    (sort ret #'< :key #'cadr)
+    )
+  )
+
+(defun vdefun-stack-time (time)
+  (let ((log (load-vdefun-log time))
+        (dict (make-hash-table :test #'equal))
+        (stack '())
+        (name-stack '())
+        (target nil)
+        (ret '())
+        )
+    (do-group (r log)
+      (when (equal (car r) 'e)
+        (pushr! stack (list (caddr r) (cadddr r)))
+        (pushr! name-stack (caddr r))
+        )
+      (when (equal (car r) 'r)
+        (setf target (car (last stack)))
+        (incf (gethash name-stack dict 0) (- (cadddr r) (cadr target)))
+        (popr! stack)
+        (popr! name-stack)
+        )
+      )
+    (maphash #'(lambda (k v)
+                 (pushr! ret (list k v))
+                 )
+             dict
+             )
+    (sort ret #'< :key #'cadr)
+    )
+  )
+
+(defun raw-args (args)
+  (remove-if #'(lambda (s)
+                 (is-str-prefix "&" (symbol-to-string s))
+                 )
+             args)
+  )
+
+(defun method-args (args)
+  "Turn method args into function args: (var classname) -> var"
+  (mapcar #'(lambda (arg)
+              (if (listp arg)
+                  (car arg)
+                  arg)
+              )
+          args)
+  )
+
+(defun raw-method-args (args)
+  (raw-args (method-args args))
+  )
+
+;;; The v-variants of defun and defmethod are intended to provide visibility
+;;; into the performance of functions and methods that we define. This follows
+;;; the convention set by joyent with the creation of vasync, verror, vstream,
+;;; etc, for the node.js ecosystem. We currently store all the data in memory
+;;; and flush it out when we're done. But we should also have the option for
+;;; dtrace probes in the future.
+(defmacro! vdefun (name args &body body)
+  ;;; TODO make raw-args not filter symbols that begin with & but are not
+  ;;; special (i.e. we can name "real" args using &.
+  (cond
+    ((and blip-vdefun-enabled)
+     `(defun ,name ,args
+        (labels ((local-fn ,(raw-args `,args) ,@body))
+          (let ((ret nil))
+            (stack-pushr blip-vdefun-log (list 'e 'f ',name (get-internal-real-time)))
+            (setf ret (multiple-value-list (local-fn ,@(raw-args `,args))))
+            (stack-pushr blip-vdefun-log (list 'r 'f ',name (get-internal-real-time)))
+            (if (>= (stack-length blip-vdefun-log) blip-vdefun-log-max)
+                (flush-vdefun-log)
+                )
+            (values-list ret)
+            )
+          )
+        )
+     )
+    ((not blip-vdefun-enabled)
+     `(defun ,name ,args ,@body)
+     )
+    )
+  )
+
+(defmacro! vdefmethod (name args &body body)
+  (cond
+    ((and blip-vdefun-enabled)
+     `(defmethod ,name ,args
+        (labels ((local-fn ,(raw-method-args `,args) ,@body))
+          (let ((ret nil))
+            (stack-pushr blip-vdefun-log (list 'e 'm ',name (get-internal-real-time)))
+            (setf ret (multiple-value-list (local-fn ,@(raw-method-args `,args))))
+            (stack-pushr blip-vdefun-log (list 'r 'm ',name (get-internal-real-time)))
+            (if (>= (stack-length blip-vdefun-log) blip-vdefun-log-max)
+                (flush-vdefun-log)
+                )
+            (values-list ret)
+            )
+          )
+        )
+     )
+    ((not blip-vdefun-enabled)
+     `(defmethod ,name ,args ,@body)
+     )
+    )
+  )
+
+(vdefun vdtt (n &optional blah)
+  (sleep n)
+  )
+
+(defclass foo ()
+  ((bar :initarg :bar :initform '()))
+  )
+
+(vdefmethod get-bar ((f foo))
+  (slot-value f 'bar)
+  )
+
+(vdefmethod set-bar ((f foo) v)
+  (setf (slot-value f 'bar) v)
+  )
+
+(defun vd-timing-info ()
+  (stack-list blip-vdefun-log)
+  )
+
+(defun empty-vdefun-log ()
+  (not (stack-list blip-vdefun-log))
+  )
 
 (defun create-list-bindings (names-arr list)
   (let ((ret '()))
@@ -2861,13 +3090,13 @@
 
 (defun walk-tree (ls test work path walk &key backoff-if)
   (if (and (listp ls) (funcall test (car ls)))
-      (funcall work (car ls) path (pushr walk 'd)))
+      (funcall work (car ls) path (reverse (cons 'd walk))))
   (if (and (listp ls) (car ls))
       (walk-tree (car ls) test work (pushr path (car ls))
-                 (pushr walk 'd) :backoff-if backoff-if))
+                 (cons 'd walk) :backoff-if backoff-if))
   (if (and (listp ls) (cdr ls))
       (walk-tree (cdr ls) test work path
-                 (pushr walk 'r) :backoff-if backoff-if)))
+                 (cons 'r walk) :backoff-if backoff-if)))
 
 ; Walk over the top level of ls and calls func on any fdefs it finds on that
 ; level.
@@ -3210,7 +3439,7 @@
       )
     (values forms empty)))
 
-(defun file-to-forms (input)
+(vdefun file-to-forms (input)
   (file-to-forms-impl input))
 
 (defun form-to-file-impl (form output)
@@ -3249,23 +3478,23 @@
     )
   )
 
-(defun char-ls-to-file (cls output)
+(vdefun char-ls-to-file (cls output)
   (str-to-file (char-ls-to-str cls) output)
   )
 
-(defun file-to-char-ls (input)
+(vdefun file-to-char-ls (input)
   (file-to-char-ls-impl input))
 
-(defun bin-to-form (input)
+(vdefun bin-to-form (input)
   (bin-to-form-impl input))
 
-(defun file-to-form (input)
+(vdefun file-to-form (input)
   (file-to-form-impl input))
 
-(defun form-to-bin (form output)
+(vdefun form-to-bin (form output)
   (form-to-bin-impl form output))
 
-(defun form-to-file (form output)
+(vdefun form-to-file (form output)
   (form-to-file-impl form output))
 
 (defun test-cmt-str ()
@@ -3312,11 +3541,11 @@
     ((is-js-fdef ls)
      (concatenate 'string (get-js-fdef-name ls) "{}"))
     ((is-js-fdef-binding ls)
-     (concatenate 'string (get-js-fbind-name ls) "="))
+     (concatenate 'string (flatten (get-js-fbind-name ls)) "="))
     ((is-js-var-binding ls)
-     (concatenate 'string (get-js-vbind-name ls) "="))
+     (concatenate 'string (flatten (get-js-vbind-name ls)) "="))
     ((is-js-obj-lit-rec ls)
-     (concatenate 'string (get-js-obj-key ls) ":"))
+     (concatenate 'string (flatten (get-js-obj-key ls)) ":"))
     ((is-js-mbr-chain-word-bind ls)
      (char-ls-to-str (get-js-mbr-nested-words ls)))
     ((and t)
@@ -3361,12 +3590,14 @@
 
 (defclass indexer ()
   ((str-stkls :initarg :str-stkls :initform '() :accessor str-stkls)
+   (repo-commits :initarg :repo-commits :initform '() :accessor repo-commits)
+   (commit-cmp :initarg :commit-cmp :initform '() :accessor commit-cmp)
    (ast :initarg :ast :initform '() :accessor ast)
    (ast-sha2 :initarg :ast-sha2 :initform nil :accessor ast-sha2)
    (test-name :initarg :test-name :initform :funcs :accessor test-name))
   )
 
-(defmethod indexer-reset ((ix indexer))
+(vdefmethod indexer-reset ((ix indexer))
   (setf (str-stkls ix) '())
   (setf (ast ix) '())
   (setf (ast-sha2 ix) nil)
@@ -3380,7 +3611,7 @@
   ((test :initarg :test :initform #'is-c-indexable-funcs :accessor test))
   )
 
-(defmethod name-to-test ((ix js-indexer) &optional test-name)
+(vdefmethod name-to-test ((ix js-indexer) &optional test-name)
   (if (not test-name)
       (setf test-name (test-name ix)))
   (cond
@@ -3395,7 +3626,7 @@
     )
   )
 
-(defmethod name-to-test ((ix c-indexer) &optional test-name)
+(vdefmethod name-to-test ((ix c-indexer) &optional test-name)
   (if (not test-name)
       (setf test-name (test-name ix))
       (setf (test-name ix) test-name))
@@ -3409,36 +3640,37 @@
     )
   )
 
-(defmethod test-name-str ((ix indexer))
+(vdefmethod test-name-str ((ix indexer))
   (symbol-name (test-name ix)))
 
-(defmethod set-test ((ix indexer) test-name)
+(vdefmethod set-test ((ix indexer) test-name)
   (setf (test-name ix) test-name)
   (setf (test ix) (name-to-test ix test-name)))
 
-(defmethod refine-path ((ix js-indexer) path)
+(vdefmethod refine-path ((ix js-indexer) path)
   (map 'list #'js-name-to-pathname (remove-if-not (test ix) path)))
 
-(defmethod refine-path ((ix c-indexer) path)
+(vdefmethod refine-path ((ix c-indexer) path)
   (map 'list #'c-name-to-pathname (remove-if-not (test ix) path)))
 
-(defmethod update ((ix indexer) node path walk)
+(vdefmethod update ((ix indexer) node path walk)
   (pushr! (str-stkls ix) (list (refine-path ix (pushr path node))
                                (fold-list walk)))
   )
 
-(defmethod listify-index ((ix indexer))
+(vdefmethod listify-index ((ix indexer))
   "Takes object and listifies it so we can just form-to-file it"
   (list (str-stkls ix) (ast-sha2 ix)))
 
-(defmethod build-index ((ix indexer))
+(vdefmethod build-index ((ix indexer))
   (let ((up #'(lambda (x y z) (update ix x y z))))
     (walk-tree (ast ix) (test ix) up '() '())
-    (listify-index ix)
+    nil
+    ;(listify-index ix)
     )
   )
 
-(defun bin-file-to-idx (input)
+(vdefun bin-file-to-idx (input)
   (let* ((form nil)
          (empty nil))
     (cond
@@ -3450,7 +3682,7 @@
       )
     (values (car form) empty)))
 
-(defun idx-to-bin-file (form output)
+(vdefun idx-to-bin-file (form output)
   (let ((out nil)
         (pathls (str-split "/" output)))
     (if (> (length pathls) 1)
@@ -3464,34 +3696,90 @@
     (close out)
     ))
 
-(defun idx-to-file (form output)
+(vdefun idx-to-file (form output)
   ;(form-to-file form output)
   (idx-to-bin-file form output)
   )
 
-(defun file-to-idx (input)
+(vdefun file-to-idx (input)
   ;(file-to-form input)
   (bin-file-to-idx input)
   )
 
-(defmethod cache-index ((ix indexer) repo file commit ast ast-sha2)
+(defun nthcadr (n ls)
+  (car (nthcdr n ls)))
+
+(defun column (n rows)
+  (let ((col '()))
+    (do-group (row rows)
+      (pushr! col (nthcadr n row))
+      )
+    col
+    )
+  )
+
+(defun zip2 (l1 l2)
+  (mapcar #'(lambda (a b)
+              (list a b)
+              )
+          l1 l2
+          )
+  )
+
+(vdefmethod serialize-index ((ix indexer) repo file commit)
+  (let* ((fcommit (git-file-latest-commit-until repo file commit (commit-cmp ix)))
+         (outdir (str-cat blip-repo-meta repo "/root/" file "/" fcommit "/path-index/"))
+         (out1 (str-cat outdir (test-name-str ix) "_paths"))
+         (out2 (str-cat outdir (test-name-str ix) "_walks"))
+         )
+    (build-index ix)
+    (idx-to-file (list (column 0 (str-stkls ix)) (ast-sha2 ix)) out1)
+    (idx-to-file (column 1 (str-stkls ix)) out2)
+    )
+  )
+
+(vdefmethod commit< ((ix indexer) c1 c2)
+  "c1 < c2 if c1 is older than c2"
+  (if (equal c1 c2)
+      (return-from commit< nil))
+  (let ((n1 nil)
+        (n2 nil))
+    (do-group (e (repo-commits ix))
+      (cond
+        ((equal c1 (car e))
+         (setf n1 (cadr e)))
+        ((equal c2 (car e))
+         (setf n2 (cadr e)))
+        )
+      )
+    (> n1 n2) ;newer commits have lower numbers
+    )
+  )
+
+(vdefmethod commit> ((ix indexer) c1 c2)
+  (if (equal c1 c2)
+      (return-from commit> nil))
+  (not (commits< ix c1 c2))
+  )
+
+(vdefmethod commit-num ((ix indexer) c)
+  (cadr (find-if #'(lambda (e) (equal c (car e))) (repo-commits ix))))
+
+(vdefmethod cache-index ((ix indexer) repo file commit ast ast-sha2)
   (indexer-reset ix)
   (if (not ast)
-      (setf ast (load-ast repo file commit))
+      (setf ast (load-ast repo file commit ix))
       )
   (setf (ast ix) ast)
   (if (not ast-sha2)
-      (setf ast-sha2 (load-ast-sha2 repo file commit))
+      (setf ast-sha2 (load-ast-sha2 repo file commit ix))
       )
   (setf (ast-sha2 ix) ast-sha2)
-  (let* ((fcommit (git-file-latest-commit-until repo file commit))
-         (outdir (str-cat blip-repo-meta repo "/root/" file "/" fcommit "/path-index/"))
-         (out (str-cat outdir (test-name-str ix))))
-    (idx-to-file (build-index ix) out))
+  (serialize-index ix repo file commit)
   )
 
-(defmethod load-index ((ix indexer) repo file commit &optional ast)
-  (let* ((fcommit (git-file-latest-commit-until repo file commit))
+(vdefmethod load-index ((ix indexer) repo file commit &optional ast)
+  (let* ((fcommit (git-file-latest-commit-until repo file commit (commit-cmp ix)))
          (in (str-cat blip-repo-meta repo "/root/" file "/" fcommit "/path-index/"
                       (test-name-str ix)))
          (ret (file-to-idx in)))
@@ -3499,19 +3787,74 @@
     )
   )
 
-(defmethod index-paths ((ix indexer) repo file commit &optional ast &key force)
+(vdefmethod load-index-paths ((ix indexer) repo file commit &optional ast)
+  (let* ((fcommit (git-file-latest-commit-until repo file commit (commit-cmp ix)))
+         (old-in (str-cat blip-repo-meta repo "/root/" file "/" fcommit "/path-index/"
+                          (test-name-str ix)))
+         (in (str-cat old-in "_paths"))
+         (ret (file-to-idx in))
+         )
+    (if (is-file-p old-in)
+        (delete-file old-in))
+    ret
+    ))
+
+(vdefmethod load-index-walks ((ix indexer) repo file commit &optional ast)
+  (let* ((fcommit (git-file-latest-commit-until repo file commit (commit-cmp ix)))
+         (in (str-cat blip-repo-meta repo "/root/" file "/" fcommit "/path-index/"
+                      (test-name-str ix) "_walks"))
+         (ret (file-to-idx in)))
+    ret
+    ))
+
+(defmacro! init-ix-repo-commits (ix)
+  `(progn
+     (if (not (repo-commits ,ix))
+         (setf (repo-commits ,ix) (number-each-elem (git-all-commits repo))))
+     (setf (commit-cmp ,ix) #'(lambda (c1 c2) (commit< ,ix c1 c2)))
+    )
+  )
+
+(vdefmethod index-paths-walks ((ix indexer) repo file commit &optional ast &key force test)
   (expand-commit! repo commit)
-  (let* ((loaded-idx (if (not force) (load-index ix repo file commit ast) nil))
-         (ast-sha2 (load-ast-sha2 repo file commit)))
+  (init-ix-repo-commits ix)
+  (if (and test)
+      (set-test ix test)
+      )
+  (let* ((loaded-idx-paths (if (not force) (load-index-paths ix repo file commit ast) nil))
+         (ast-sha2 (load-ast-sha2 repo file commit ix)))
     (cond
-      ((or (not loaded-idx)
-           (not (equalp (path-index-ast-sha2 loaded-idx)
+      ((or (not loaded-idx-paths)
+           (not (equalp (path-index-ast-sha2 loaded-idx-paths)
                        ast-sha2)))
        (cache-index ix repo file commit ast ast-sha2)
-       (setf loaded-idx (load-index ix repo file commit ast))
+       (setf loaded-idx-paths (load-index-paths ix repo file commit ast))
        )
       )
-    loaded-idx
+    (list (zip2 (car loaded-idx-paths) (load-index-walks ix repo file commit ast))
+          (path-index-ast-sha2 loaded-idx-paths))
+    ;loaded-idx
+    )
+  )
+
+(vdefmethod index-paths ((ix indexer) repo file commit &optional ast &key force test)
+  (expand-commit! repo commit)
+  (init-ix-repo-commits ix)
+  (if (and test)
+      (set-test ix test)
+      )
+  (let* ((loaded-idx-paths (if (not force) (load-index-paths ix repo file commit ast) nil))
+         (ast-sha2 (load-ast-sha2 repo file commit ix)))
+    (cond
+      ((or (not loaded-idx-paths)
+           (not (equalp (path-index-ast-sha2 loaded-idx-paths)
+                        ast-sha2)))
+       (cache-index ix repo file commit ast ast-sha2)
+       (setf loaded-idx-paths (load-index-paths ix repo file commit ast))
+       )
+      )
+    (list (zip2 (car loaded-idx-paths) (mapcar #'(lambda (a) nil) (car loaded-idx-paths)) )
+          (path-index-ast-sha2 loaded-idx-paths))
     )
   )
 
@@ -3624,8 +3967,10 @@
   )
 
 (defmacro! load-list-nodes (name suf)
-  `(defun ,name (repo file commit)
-     (let* ((fcommit (git-file-latest-commit-until repo file commit))
+  `(vdefun ,name (repo file commit &optional indexer)
+     ;(assert commit-cmp)
+     (let* ((cmp (if indexer (commit-cmp indexer)))
+            (fcommit (git-file-latest-commit-until repo file commit cmp))
             (in (str-cat blip-repo-meta repo "/root/" file "/" fcommit ,suf)))
        (bin-to-form in)
        )
@@ -3634,7 +3979,7 @@
 
 
 (defmacro! x-list-node-impl (name test getter)
-  `(defun ,name (ast &optional count)
+  `(vdefun ,name (ast &optional count)
     (list-node-in-ast #',test
                       #'(lambda (n)
                           (char-ls-to-str (,getter n)))
@@ -3645,12 +3990,14 @@
 
 
 (defmacro! cache-x-list-node (name list-impl suf)
-  `(defun ,name (repo file commit)
-    (let* ((ast (load-ast repo file commit))
-           (fcommit (git-file-latest-commit-until repo file commit))
-           (outdir (str-cat blip-repo-meta repo "/root/" file "/" fcommit))
-           (out (str-cat outdir ,suf))
-          )
+  `(vdefun ,name (repo file commit &optional indexer)
+     (let* ((ast (load-ast repo file commit indexer))
+            (cmp (if indexer (commit-cmp indexer)))
+            (fcommit (git-file-latest-commit-until repo file commit cmp))
+            (outdir (str-cat blip-repo-meta repo "/root/" file "/" fcommit))
+            (out (str-cat outdir ,suf))
+            )
+      ;(assert commit-cmp)
       ;TODO implement a cache-ast function that will cache ASTs on a per-file basis
       ;TODO cleanup parse-x-files-at-commit
       (if (not ast)
@@ -3663,16 +4010,17 @@
 
 
 (defmacro! x-list-node (name cacher loader)
-  `(defun ,name (repo file commit &optional count &key force)
+  `(vdefun ,name (repo file commit &optional count &key force indexer)
      (expand-commit! repo commit)
+     ;(assert commit-cmp)
      (multiple-value-bind
-           (ls empty) (if (not force) (,loader repo file commit)
+           (ls empty) (if (not force) (,loader repo file commit indexer)
                           (values nil nil))
 
        (cond
          ((and (not ls) (not empty))
-          (,cacher repo file commit)
-          (setf ls (,loader repo file commit)))
+          (,cacher repo file commit indexer)
+          (setf ls (,loader repo file commit indexer)))
          )
        (cond
          ((not count)
@@ -5124,21 +5472,21 @@
   (char-ls-to-str (cddr (reduce #'append ls)))))
 
 
-(defun print-form (n s w)
+(vdefun print-form (n s w)
   (if (is-commit n)
       (print (caddr n))
       (print (file-mod-stringify-path n))
       ))
 
 
-(defun build-ast-dir (repo)
+(vdefun build-ast-dir (repo)
   (pushdir (str-cat blip-asts repo))
   (do-group (f (git-show-ftree-all-time repo))
     (mkdir (str-cat (cwd) "/" f)))
   (popdir)
   )
 
-(defun build-meta-dir (repo)
+(vdefun build-meta-dir (repo)
   (let* ((dir (str-cat blip-repo-meta repo "/root")))
     (mkdir dir)
     (pushdir dir)
@@ -5149,11 +5497,11 @@
     )
   )
 
-(defun strap-git-repo (repo)
+(vdefun strap-git-repo (repo)
   (build-meta-dir repo)
   (build-ast-dir repo))
 
-(defun git-show-ftree (repo commit)
+(vdefun git-show-ftree (repo commit)
   (assert (and repo commit))
   (let ((tree nil))
     (pushdir (str-cat blip-repos repo "/"))
@@ -5165,10 +5513,10 @@
     (str-split "\\n" tree)
     ))
 
-(defun files-present-at-commit (repo commit)
+(vdefun files-present-at-commit (repo commit)
   (git-show-ftree repo commit))
 
-(defun git-show-ftree-all-time (repo)
+(vdefun git-show-ftree-all-time (repo)
   (let ((tree nil))
     (pushdir (str-cat blip-repos repo "/"))
     (setf tree
@@ -5183,7 +5531,7 @@
     )
   )
 
-(defun git-head-commit (repo)
+(vdefun git-head-commit (repo)
   (let ((hc nil))
     (pushdir (str-cat blip-repos repo "/"))
     (setf hc (inferior-shell:run/ss (list "git" "rev-parse" "HEAD")))
@@ -5191,7 +5539,7 @@
     hc
     ))
 
-(defun git-all-commits (repo)
+(vdefun git-all-commits (repo)
   "Used to get list of all commit SHAs."
   (let ((rc nil))
     (pushdir (str-cat blip-repos repo "/"))
@@ -5201,7 +5549,19 @@
     (str-split "\\n" rc)
     ))
 
-(defun git-root-commits (repo)
+(vdefun number-each-elem (ls)
+  "Turns a list of e, into a list (e, n) where n is the number of the element"
+  (let ((n 0)
+        (new-ls '()))
+    (do-group (e ls)
+      (pushr! new-ls (list e n))
+      (incf n)
+      )
+    new-ls
+    )
+  )
+
+(vdefun git-root-commits (repo)
   "Used to get root commits (like the first commit, and merges)"
   (let ((rc nil))
     (pushdir (str-cat blip-repos repo "/"))
@@ -5212,7 +5572,7 @@
     (str-split "\\n" rc)
     ))
 
-(defun git-file-latest-commit (repo path)
+(vdefun git-file-latest-commit-legacy (repo path)
   "Only works for files that are present in current branch"
   (let ((lc nil))
     (pushdir (str-cat blip-repos repo "/"))
@@ -5224,7 +5584,95 @@
     ;(str-split "\\n" lc)
     ))
 
-(defun git-file-latest-commit-until (repo path commit)
+(vdefun git-file-latest-commit (repo path &optional use-index)
+  (cond
+    ((not use-index)
+     (git-file-latest-commit-legacy repo path))
+    ((and use-index)
+     (let* ((dir (str-cat blip-repo-meta repo "/root/" path))
+            (commits (file-to-form (str-cat dir "/LOG")))
+           )
+       (car commits)
+       )
+     )
+    )
+  )
+
+(vdefun git-files-commits (repo paths &optional stop-at)
+  "Only works for files that are present in current branch"
+  (let ((lc nil))
+    (pushdir (str-cat blip-repos repo "/"))
+    (setf lc (inferior-shell:run/ss (append (list "git" "--no-pager" "log"
+                                                  "--pretty=format:%H"
+                                                  "--name-only" "--no-merges"
+                                                  ;(if (and stop-at)
+                                                      ;(str-cat stop-at "..HEAD")
+                                                      ;"")
+                                                  "--"
+                                                  )
+                                            paths)))
+    (popdir)
+    (mapcar #'(lambda (s) (str-split "\\n" s)) (str-split "\\n\\n" lc))
+    ))
+
+(vdefun git-rotate-log (log)
+  (let ((dict (make-hash-table :test #'equal))
+        (list-dict '())
+        (commit nil))
+    (do-group (commit-info log)
+      (setf commit (car commit-info))
+      (do-group (file (cdr commit-info))
+        (pushr! (gethash file dict) commit)
+        )
+      )
+    (maphash #'(lambda (f cl)
+                 (pushr! list-dict (list f cl)))
+             dict)
+    (sort list-dict #'string< :key #'car)
+    )
+  )
+
+(vdefun git-save-file-logs (repo paths)
+  (let* ((cur-head (git-head-commit repo))
+         (logs (git-rotate-log (git-files-commits repo paths)))
+         (root (str-cat blip-repo-meta repo "/root/"))
+         (target nil)
+         )
+    (do-group (l logs)
+      (setf target (str-cat root (car l) "/"))
+      (form-to-file cur-head (str-cat target "HEAD"))
+      (form-to-file (cadr l) (str-cat target "LOG"))
+      )
+    )
+  )
+
+(vdefun git-update-file-logs (repo paths)
+  (let* ((cur-head (git-head-commit repo))
+         (logs (git-rotate-log (git-files-commits repo paths)))
+         (known-head nil)
+         (root (str-cat blip-repo-meta repo "/root/"))
+         (target nil)
+         (do-update nil)
+         )
+    (do-group (p paths)
+      (setf target (str-cat root p "/"))
+      (cond
+        ((not do-update)
+         (setf known-head (file-to-form (str-cat target "HEAD")))
+         (cond
+           ((not (equal cur-head known-head))
+            (setf do-update t)
+            )
+           )
+         )
+        )
+      )
+    (if (and do-update)
+        (git-save-file-logs repo paths))
+
+    ))
+
+(vdefun git-file-latest-commit-until-legacy (repo path commit)
   "Only works for files that are present in current branch"
   (let ((lc nil))
     (pushdir (str-cat blip-repos repo "/"))
@@ -5233,10 +5681,33 @@
                                           path)))
     (popdir)
     lc
-                                        ;(str-split "\\n" lc)
     ))
 
-(defun git-file-all-commits (repo path)
+(vdefun git-file-latest-commit-until (repo path commit &optional cmp)
+  "We expect (cmp c1 c2) to tell us if `c1` is older than the one we are looking at"
+  (cond
+    ((not cmp)
+     (git-file-latest-commit-until-legacy repo path commit)
+     )
+    ((and cmp)
+     (let* ((dir (str-cat blip-repo-meta repo "/root/" path))
+           (commits (file-to-form (str-cat dir "/LOG")))
+           (youngest-ancestor nil))
+       (do-group (c commits)
+         (cond
+           ((and (equal c commit) (not youngest-ancestor))
+            (setf youngest-ancestor c))
+           ((and (funcall cmp c commit) (not youngest-ancestor))
+            (setf youngest-ancestor c))
+           )
+         )
+       youngest-ancestor
+       )
+     )
+    )
+  )
+
+(vdefun git-file-all-commits (repo path)
   "Only works for files that are present in current branch"
   (let ((lc nil))
     (pushdir (str-cat blip-repos repo "/"))
@@ -5293,7 +5764,7 @@
   )
 
 
-(defun parse-x-files-at-commit (repo commit &key force suf pref parser whitelist antipref)
+(vdefun parse-x-files-at-commit (repo commit &key force suf pref parser whitelist antipref)
   (expand-commit! repo commit)
   (let ((files (files-present-at-commit repo commit))
         (curbr (git-current-branch repo)))
@@ -5305,7 +5776,7 @@
                           (if (and antipref) (not (is-str-prefix antipref file)) t)
                           )
                      (let* ((slot (str-cat blip-asts repo "/" file))
-                            (revid (git-file-latest-commit repo file))
+                            (revid (git-file-latest-commit repo file t))
                             (fullpath (str-cat slot "/" revid))
                             (full-src-path (str-cat (cwd) "/" file)))
                        (cond
@@ -5331,7 +5802,7 @@
     (popdir)
     ))
 
-(defun expand-commit (repo commit)
+(vdefun expand-commit (repo commit)
   (if (equal commit 'head)
       (git-head-commit repo)
       commit))
@@ -5339,7 +5810,7 @@
 (lol:defmacro! expand-commit! (r c)
   `(setf ,c (expand-commit ,r ,c)))
 
-(defun list-files-at-commit (repo commit &key suf pref antipref)
+(vdefun list-files-at-commit (repo commit &key suf pref antipref)
   (expand-commit! repo commit)
   (let ((files (files-present-at-commit repo commit))
         (list '()))
@@ -5355,21 +5826,23 @@
     )
   )
 
-(defun ast-path (repo file commit)
+(vdefun ast-path (repo file commit &optional indexer)
   (expand-commit! repo commit)
-  (let* ((revid (git-file-latest-commit-until repo file commit)))
+  (let* ((cmp (if indexer (commit-cmp indexer)))
+         (revid (git-file-latest-commit-until repo file commit cmp)))
     (str-cat blip-asts repo "/" file "/" revid)))
 
-(defun ast-sha2-path (repo file commit)
+(vdefun ast-sha2-path (repo file commit &optional indexer)
   (expand-commit! repo commit)
-  (let* ((revid (git-file-latest-commit-until repo file commit)))
+  (let* ((cmp (if indexer (commit-cmp indexer)))
+         (revid (git-file-latest-commit-until repo file commit cmp)))
     (str-cat blip-asts repo "/" file "/" revid "_sha2")))
 
-(defun load-ast (repo file commit)
-  (bin-to-form (ast-path repo file commit)))
+(vdefun load-ast (repo file commit &optional indexer)
+  (bin-to-form (ast-path repo file commit indexer)))
 
-(defun load-ast-sha2 (repo file commit)
-  (bin-to-form (ast-sha2-path repo file commit)))
+(vdefun load-ast-sha2 (repo file commit &optional indexer)
+  (bin-to-form (ast-sha2-path repo file commit indexer)))
 
 (defun js-path-cat-aux (str ls files)
   (let* ((dstr (str-cat str (car ls) "/"))

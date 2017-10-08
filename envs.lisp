@@ -143,9 +143,9 @@
      ))
 
 (defmacro! new-js-env (name repo-nm commit &key pref antipref depth verbose
-                            require extend-idx)
+                            req extend-idx)
   `(progn
-     (new-env-req ,require ,verbose)
+     (new-env-req ,req ,verbose)
      (new-env ,name
        (repo ,repo-nm)
        (commit (expand-commit ,repo-nm ,commit))
@@ -259,7 +259,7 @@
     )
   )
 
-(defmacro! do-indices (args force alt-idx-type &body body)
+(defmacro! do-indices (args force alt-idx-type full-idx &body body)
   (assert (= (length args) 2))
   (let ((f (car args))
         (ix (cadr args))
@@ -275,9 +275,12 @@
             (indexer (get-env-var 'indexer))
             (idx-type-conv (get-env-var 'idx-type-conv))
             )
+       (git-update-file-logs repo files)
        (do-group (file files)
          (let ((,f file)
-               (,ix (index-paths indexer repo file cmt nil :force ,force)))
+               (,ix (if (and ,full-idx)
+                        (index-paths-walks indexer repo file cmt nil :force ,force :test idx-type)
+                        (index-paths indexer repo file cmt nil :force ,force :test idx-type))))
            ,@body
            )
          )
@@ -293,7 +296,7 @@
          (paths (gensym))
         )
     (assert (equal (type-of path) 'symbol))
-    `(do-indices (,f ,ix) force alt-idx-type
+    `(do-indices (,f ,ix) force alt-idx-type t
          (let ((,paths (path-index-str (list ,f ,ix)))
                (,ast nil)
                )
@@ -317,6 +320,7 @@
           (ast-ls-def (get-env-var 'ast-ls-def))
           (ast-ls-fbind (get-env-var 'ast-ls-fbind))
           (ast-ls-word (get-env-var 'ast-ls-word))
+          (indexer (get-env-var 'indexer))
           )
      ,@body))
 
@@ -356,24 +360,25 @@
   )
 
 (defun index-build-impl (&optional pov &key page force alt-idx-type)
-  (do-indices (f ix) force alt-idx-type
-    (print-js-paths (list f ix) pov)
+  (do-indices (f ix) force alt-idx-type nil
+    ;(print-js-paths (list f ix) pov)
     t))
 
-(defun index-print (&optional pov &key page force alt-idx-type)
-  (do-indices (f ix) force alt-idx-type
+(vdefun index-print (&optional pov &key page force alt-idx-type)
+  (do-indices (f ix) force alt-idx-type nil
     (print-header-and-paths (print-js-paths (list f ix) pov))))
 
-(defun index-print-sort (&optional pov &key page force alt-idx-type)
-  (do-indices (f ix) force alt-idx-type
+(vdefun index-print-sort (&optional pov &key page force alt-idx-type)
+  (do-indices (f ix) force alt-idx-type nil
     (print-header-and-paths (print-js-paths (list f ix) pov :sort t))))
 
-(defun index-build (&key force alt-idx-type)
+(vdefun index-build (&key force alt-idx-type)
   (index-build-impl :down :force force :alt-idx-type alt-idx-type))
 
 (defmacro! ast-ls (name lister)
   `(defun ,name (&optional count &key pref force)
     (in-ls-env
+      (init-ix-repo-commits indexer)
       (let ((full-list nil)
             (filt-list nil))
         (setf full-list (map 'list
@@ -381,7 +386,8 @@
                                  (list f
                                        (if ,lister
                                            (funcall ,lister repo f cmt count
-                                                    :force force)
+                                                    :force force
+                                                    :indexer indexer)
                                            nil))) files))
 
         (if (and pref)
@@ -454,6 +460,7 @@
          (antipref (get-env-var 'parser-antipref))
          (parser (get-env-var 'parser))
          )
+    (git-update-file-logs repo (ast-ls-files))
     (parse-x-files-at-commit repo cmt :force force :suf suf
                                       :pref pref :parser parser
                                       :whitelist (ast-ls-files))
@@ -483,7 +490,7 @@
     (let ((pf nil)
           (ast-str nil)
           (trees nil))
-      (do-indices (f ix) force alt-idx-type
+      (do-indices (f ix) force alt-idx-type t
         (setf trees (cadr (index-get-subtrees-impl
                            (list f ix) path
                            (load-ast repo f cmt)
@@ -564,23 +571,23 @@
 
 (defun index-get-subtrees (path &optional pov &key page force alt-idx-type)
   (pre-filter-files path
-    (do-indices (f ix) force alt-idx-type
+    (do-indices (f ix) force alt-idx-type t
       (print-ln (index-get-subtrees-impl (list f ix) path (load-ast repo f cmt) pov))
       )))
 
 (defun index-get-subtree-walks (path &optional pov &key page force alt-idx-type)
   (pre-filter-files path
-    (do-indices (f ix) force alt-idx-type
+    (do-indices (f ix) force alt-idx-type t
       (print-ln (index-get-path-walk-impl (list f ix) path
                                           (load-ast repo f cmt) pov)))
     )
   )
 
-(defun index-prefix (pref &optional pov &key page force alt-idx-type)
+(vdefun index-prefix (pref &optional pov &key page force alt-idx-type)
   (let ((res nil)
         (pf nil))
     (pre-filter-files pref
-      (do-indices (f ix) force alt-idx-type
+      (do-indices (f ix) force alt-idx-type nil
         (setf res (get-path-with-prefix pref (list f ix) pov))
         (if (and (cadr res))
             (print-header-and-paths res)
@@ -593,7 +600,7 @@
 ;;; TODO update this function to use pre-filtered files like index-prefix does.
 (defun index-suffix (suf &optional pov &key page force alt-idx-type)
   (let ((res nil))
-    (do-indices (f ix) force alt-idx-type
+    (do-indices (f ix) force alt-idx-type nil
       (setf res (get-path-with-suffix suf (list f ix) pov))
       (if (and (cadr res))
           (print-header-and-paths res)
@@ -604,7 +611,7 @@
 
 (defun index-word-count-old (word &optional pov &key zero pre page force alt-idx-type)
   (pre-filter-files word
-    (do-indices (f ix) force alt-idx-type
+    (do-indices (f ix) force alt-idx-type t
       (assert idx-type)
       ;;; TODO return path, count. Print using format
       (do-group (p1 (get-path-node-count
@@ -644,7 +651,7 @@
   )
 
 (defun index-line-count (&optional pov &key zero pre page force alt-idx-type)
-  (do-indices (f ix) force alt-idx-type
+  (do-indices (f ix) force alt-idx-type t
     (get-path-node-count
      #'(lambda (n)
          (and (is-white-space-group n)
@@ -653,7 +660,7 @@
      pov :zero zero :pre pre)))
 
 (defun index-uniq (&optional pov &key page force alt-idx-type)
-  (do-indices (f ix) force alt-idx-type
+  (do-indices (f ix) force alt-idx-type nil
     (uniq-path (list f ix)
                :pov pov
                :fmt t
@@ -661,7 +668,7 @@
                :sort-count t)))
 
 (defun index-path-depth (&optional pov &key page force alt-idx-type)
-  (do-indices (f ix) force alt-idx-type
+  (do-indices (f ix) force alt-idx-type nil
     (paths-by-depth (list f ix)
                     :pov pov
                     :fmt t)))
