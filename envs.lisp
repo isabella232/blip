@@ -11,7 +11,6 @@
 ;(setf env-avail (file-to-form blip-env-avail))
 (defvar env-avail nil)
 
-
 (defun all-files (repo commit suf pref antipref &optional depth)
   (let* ((fs (list-files-at-commit
                  repo commit :suf suf :pref pref :antipref antipref)))
@@ -338,14 +337,14 @@
      ,@body))
 
 (defun print-header (s)
-  (format t "~d:~%~%" s)
+  (puts "~d:~%" s)
   )
 
 (defun print-paths (ls)
   (do-group (s ls)
-    (format t "~d~%" s)
+    (puts "~d" s)
     )
-  (format t "~%~%")
+  (puts "~%")
   )
 
 (defun print-header-and-paths (pair)
@@ -355,7 +354,7 @@
 
 (defun print-pairs (pairs)
   (do-group (p pairs)
-    (format t "~d    ~d~%" (car p) (cadr p))
+    (puts "~d    ~d" (car p) (cadr p))
     )
   )
 
@@ -498,10 +497,10 @@
         (do-group (tree trees)
           (setf ast-str (ast-to-str (funcall ast-fmt tree)))
           (if (and (not (equal f pf)) (not (equal ast-str "")))
-              (format t "~d:~%~%" f))
+              (puts "~d:~%" f))
           (setf pf f)
           (if (not (equal ast-str ""))
-              (format t "~d~%~%" ast-str)))
+              (puts "~d~%" ast-str)))
         )
       )
     )
@@ -558,7 +557,8 @@
        ((or (listp ,pref) (and (stringp ,pref) (not (string= ,pref "/"))))
         (setf f4 (ast-extract-files (ast-ls-words t :pref rpref)))
         (set-env-files (remove-duplicates (append f1 f2 f3 f4) :test #'equal))
-        (setf res ,@body)
+        (if (and (get-env-var 'files))
+            (setf res ,@body))
         (set-env-files orig-files)
         res
         )
@@ -573,6 +573,13 @@
   (pre-filter-files path
     (do-indices (f ix) force alt-idx-type t
       (print-ln (index-get-subtrees-impl (list f ix) path (load-ast repo f cmt) pov))
+      )))
+
+
+(defun index-get-subtrees-list (path &optional pov &key page force alt-idx-type)
+  (pre-filter-files path
+    (do-indices (f ix) force alt-idx-type t
+      (index-get-subtrees-impl (list f ix) path (load-ast repo f cmt) pov)
       )))
 
 (defun index-get-subtree-walks (path &optional pov &key page force alt-idx-type)
@@ -594,6 +601,22 @@
             )
         )
       )
+    )
+  )
+
+(vdefun index-prefix-list (pref &optional pov &key page force alt-idx-type)
+  (let ((ret nil)
+        (res nil)
+        (pf nil))
+    (pre-filter-files pref
+      (do-indices (f ix) force alt-idx-type nil
+        (setf res (get-path-with-prefix pref (list f ix) pov))
+        (if (and (cadr res))
+            (pushr! ret res)
+            )
+        )
+      )
+    ret
     )
   )
 
@@ -641,7 +664,7 @@
                          ) '() '())
           (cond
             ((> count 0)
-             (format t "~d   ~d ~A~%" f path count)
+             (puts "~d   ~d ~A" f path count)
              )
             )
           (setf count 0))
@@ -702,7 +725,7 @@
 
 (defmacro! in-exp-env (&body body)
   `(let* ((pref '("module/exports/" "module/exports=" "exports/" "exports=/"))
-          (ix (index-prefix pref :down :alt-idx-type :binds))
+          (ix (index-prefix-list pref :down :alt-idx-type :binds))
           (keys (ix-get-mod-exp-key ix))
           )
     ,@body

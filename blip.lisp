@@ -10,6 +10,8 @@
 (ql:quickload "cl-quickcheck")
 (ql:quickload "drakma")
 (ql:quickload "cl-ppcre")
+;(ql:quickload "cl-graph")
+;(ql:quickload "vecto")
 (ql:quickload "cl-conspack")
 (ql:quickload "trivial-ssh")
 (ql:quickload "inferior-shell") ; Convenient for synchronous command execution
@@ -19,6 +21,7 @@
 (ql:quickload "iterate")
 (ql:quickload "uuid")
 (ql:quickload "ironclad")
+;(ql:quickload "alexandria")
 ;Works, but not too good at validation
 ;(ql:quickload "unix-options")
 (load "diff-sexp.lisp")
@@ -161,8 +164,8 @@
 (defun test-pl ()
   (pipeline 1 #'mysleep #'mysleep #'mysleep))
 
-(defun string-to-symbol (s)
-  (intern (string-upcase s)))
+(defun string-to-symbol (s &optional case-sensitive)
+  (intern (if case-sensitive s (string-upcase s))))
 
 (defun symbol-to-string (s &optional upcase)
   (if (and upcase)
@@ -173,6 +176,9 @@
 
 (defun string-to-keyword (s)
   (intern (string-upcase s) "KEYWORD"))
+
+(defun symbol-to-keyword (s)
+  (string-to-keyword (symbol-to-string s)))
 
 (defun str-cat-2 (s1 s2)
   "Concatenates 2 strings"
@@ -262,6 +268,31 @@
   "Splits the string at each place that the given pcre regex is matched"
   (cl-ppcre:split regex str))
 
+(defun str-matches (regex str)
+  "returns nil if there is not match in str, t otherwise"
+  (if (cl-ppcre:all-matches regex str) t nil)
+  )
+
+(defun list-split (elem ls)
+  (let ((ret '())
+        (sub-ls '())
+        )
+    (do-group (e1 e2 ls)
+      (when (not (equal e1 elem))
+        (pushr! sub-ls e1)
+        )
+      (when (and sub-ls (or (not e2) (equal e2 elem)))
+        (pushr! ret sub-ls)
+        (setf sub-ls '())
+        )
+      )
+    ret
+    )
+  )
+
+(defun str-replace (regex targ str)
+  (cl-ppcre:regex-replace-all regex str targ))
+
 (defun cwd ()
   "Returns the current working directory"
   (sb-posix:getcwd))
@@ -336,6 +367,38 @@
 (defvar gerrit-base-url "https://cr.joyent.us/p/")
 (defvar github-api-url "https://api.github.com/")
 (defvar blip-github-users (blip-file (str-cat blip-repos-index "github-users")))
+(defvar blip-fmt-out t)
+(defvar blip-err-out *error-output*)
+(defvar blip-pre-loaded-env nil)
+
+
+(defun set-blip-fmt-out (s)
+  (setf blip-fmt-out s)
+  )
+
+(defun set-blip-err-out (s)
+  (setf blip-err-out s)
+  )
+
+(defun pre-load-env (env)
+  (setf blip-pre-loaded-env env)
+  )
+
+(defmacro! puts (fmtstr &rest vars)
+  (let ((ctl-str (str-cat fmtstr "~%")))
+    `(progn
+       (format blip-fmt-out ,ctl-str ,@vars)
+       )
+    )
+  )
+
+(defmacro! e-puts (fmtstr &rest vars)
+  (let ((ctl-str (str-cat fmtstr "~%")))
+    `(progn
+       (format blip-err-out ,ctl-str ,@vars)
+       )
+    )
+  )
 
 (defun blip-env-cfg-currentp ()
   (let* ((shanew (sha256-file blip-env-cfg))
@@ -451,7 +514,14 @@
      ))
 
 (defun load-top-env ()
-  (pushenv (load-env (car (last (file-to-form blip-env-stack)))))
+  (cond
+    ((and blip-pre-loaded-env)
+     (pushenv blip-pre-loaded-env)
+     )
+    ((and t)
+     (pushenv (load-env (car (last (file-to-form blip-env-stack)))))
+     )
+    )
   )
 
 (defun load-xform (s)
@@ -527,8 +597,8 @@
   )
 
 (defun print-ln (form)
-  (print form)
-  (format t "~%"))
+  (puts "~A~%" form)
+  )
 
 (defun mk-blip-dirs ()
   (do-group (d blip-dirs) (mkdir d))
@@ -554,48 +624,48 @@
          (nouns (cddr argv)))
     (cond
       ((is-cmd-verb "help")
-       (format t "env-ls ~%")
-       (format t "env-stack ~%")
-       (format t "top-env ~%")
-       (format t "pushenv $env-name ~%")
-       (format t "popenv $env-name ~%")
-       (format t "index-build [--force] [--type $type] ~%")
-       (format t "index-prefix $path-prefix [up|down] [--page $pg-num] [--force] ~
-                  [--type $type] ~%")
-       (format t "index-suffix $path-suffix [up|down] [--page $pg-num] [--force] ~
-                  [--type $type] ~%")
-       (format t "index-get-subtrees $path [up|down] [--page $pg-num] [--force] ~
-                  [--type $type] ~%")
-       (format t "index-get-subtrees-str $path [up|down] [--fmt $formatter] ~
-                  [--page $pg-num] [--force] [--type $type] ~%")
-       (format t "index-word-count $word [up|down] [--page $pg-num] [--force] ~
-                  [--type $type] ~%")
-       (format t "index-uniq [up|down] [--page $pg-num] [--force] ~
-                  [--type $type] ~%")
-       (format t "index-path-depth [up|down] [--page $pg-num] [--force] ~
-                  [--type $type] ~%")
-       (format t "ast-ls-files ~%")
-       (format t "ast-ls-words [--count] [--pref $prefix] [--force] ~%")
-       (format t "ast-ls-fdefs [--count] [--pref $prefix] [--force] ~%")
-       (format t "ast-ls-fbinds [--count] [--pref $prefix] [--force] ~%")
-       (format t "ast-ls-fcalls [--count] [--pref $prefix] [--force]  ~%")
-       (format t "ast-parse [--force]  ~%")
-       (format t "ast-dump-file $file ~%")
-       (format t "requires-what $filename [--force]")
-       (format t "what-requires $filename [--force]")
-       (format t "bottom-deps [--force]")
-       (format t "top-deps [--force]")
-       (format t "exports-what $filename")
-       (format t "what-exports $funcname")
-       (format t "reconstruct-repo ~%")
-       (format t "github-users ~%")
-       (format t "github-user-add $username ~%")
-       (format t "github-user-rem $username ~%")
-       (format t "github-user-clone $username ~%")
-       (format t "github-user-pull $username ~%")
-       (format t "pull-env ~%")
-       (format t "strap-repo ~%")
-       (format t "eval $lisp-file ~%")
+       (puts "env-ls")
+       (puts "env-stack ")
+       (puts "top-env ")
+       (puts "pushenv $env-name ")
+       (puts "popenv $env-name ")
+       (puts "index-build [--force] [--type $type] ")
+       (puts "index-prefix $path-prefix [up|down] [--page $pg-num] [--force] ~
+                  [--type $type] ")
+       (puts "index-suffix $path-suffix [up|down] [--page $pg-num] [--force] ~
+                  [--type $type] ")
+       (puts "index-get-subtrees $path [up|down] [--page $pg-num] [--force] ~
+                  [--type $type] ")
+       (puts "index-get-subtrees-str $path [up|down] [--fmt $formatter] ~
+                  [--page $pg-num] [--force] [--type $type] ")
+       (puts "index-word-count $word [up|down] [--page $pg-num] [--force] ~
+                  [--type $type] ")
+       (puts "index-uniq [up|down] [--page $pg-num] [--force] ~
+                  [--type $type] ")
+       (puts "index-path-depth [up|down] [--page $pg-num] [--force] ~
+                  [--type $type] ")
+       (puts "ast-ls-files ")
+       (puts "ast-ls-words [--count] [--pref $prefix] [--force] ")
+       (puts "ast-ls-fdefs [--count] [--pref $prefix] [--force] ")
+       (puts "ast-ls-fbinds [--count] [--pref $prefix] [--force] ")
+       (puts "ast-ls-fcalls [--count] [--pref $prefix] [--force]  ")
+       (puts "ast-parse [--force]  ")
+       (puts "ast-dump-file $file ")
+       (puts "requires-what $filename [--force]")
+       (puts "what-requires $filename [--force]")
+       (puts "bottom-deps [--force]")
+       (puts "top-deps [--force]")
+       (puts "exports-what $filename")
+       (puts "what-exports $funcname")
+       (puts "reconstruct-repo ")
+       (puts "github-users ")
+       (puts "github-user-add $username ")
+       (puts "github-user-rem $username ")
+       (puts "github-user-clone $username ")
+       (puts "github-user-pull $username ")
+       (puts "pull-env ")
+       (puts "strap-repo ")
+       (puts "eval $lisp-file ")
        )
       ((is-cmd-verb "compute-disk-usage")
        (let ((date (get-universal-time)))
@@ -611,14 +681,14 @@
           (quiet-load blip-env-cfg)
           )
          )
-       (format t "~A~%" (file-to-form blip-env-avail))
+       (puts "~A" (file-to-form blip-env-avail))
        )
       ((is-cmd-verb "env-stack")
-       (format t "~A~%" (file-to-form blip-env-stack))
+       (puts "~A" (file-to-form blip-env-stack))
        )
       ((is-cmd-verb "top-env")
        (load-top-env)
-       (format t "~A~%" (get-env-var 'name))
+       (puts "~A" (get-env-var 'name))
        )
       ((is-cmd-verb "pushenv")
        (let* ((env-name (string-to-symbol (car nouns)))
@@ -709,7 +779,7 @@
        )
       ((is-cmd-verb "ast-dump-file")
        (load-top-env)
-       (format t "~d~%"
+       (puts "~d"
         (char-ls-to-str
          (flatten
            (load-ast (get-env-var 'repo) (car nouns) (get-env-var 'commit)))))
@@ -813,7 +883,7 @@
        (sleep (parse-integer (car nouns)))
        )
       ((and t)
-       (format t "Bad verb!~%")
+       (puts "Bad verb!")
        (sb-ext:exit :code -1))
       )
     ))
@@ -845,9 +915,9 @@
         (-1 (error "fork failed"))
         (0 (sb-ext:save-lisp-and-die path :toplevel #'main :executable t))
         (otherwise (sb-posix:wait)))
-      (format t "stand-alone core ~a saved~%" path))
+      (puts "stand-alone core ~a saved" path))
     #-sbcl
-    (error "not available on this lisp~%")
+    (error "not available on this lisp")
         (values)))
 
 
@@ -1012,6 +1082,10 @@
         (name-stack '())
         (target nil)
         (ret '())
+        )
+    (puts "~A" (car log))
+    (if (equal 'args (caar log))
+        (setf log (cdr log))
         )
     (do-group (r log)
       (when (equal (car r) 'e)
@@ -1339,7 +1413,7 @@
        ))
   (stack-list stack))
 
-(defun white-space (ls)
+(vdefun white-space (ls)
   "Returns a list that is just like the input, except that all sequences of
    whitespace are grouped in their own sublists"
   (white-space-aux (make-instance 'stack) (car ls) (cdr ls)))
@@ -1393,11 +1467,11 @@
 (def-blanks-aux blanks-aux is-blank)
 (def-blanks-aux cl-blanks-aux is-cl-blank)
 
-(defun blanks (ls)
+(vdefun blanks (ls)
   "Returns the input list, with all blanks in sublists"
   (blanks-aux (make-instance 'stack) (car ls) (cdr ls)))
 
-(defun cl-blanks (ls)
+(vdefun cl-blanks (ls)
   "Same as above, but for common lisp blanks"
   (cl-blanks-aux (make-instance 'stack) (car ls) (cdr ls)))
 
@@ -1483,7 +1557,7 @@
             )
          (stack-list stack)
          )
-       (defun ,name (ls)
+       (vdefun ,name (ls)
          (,aux (make-instance 'stack) (car ls) (cdr ls)))
        )
     )
@@ -1547,7 +1621,7 @@
                   (go again))))))
          (stack-list stack)
          )
-       (defun ,name (ls)
+       (vdefun ,name (ls)
          (,aux (make-instance 'stack) (car ls) (cdr ls)))
        )
     )
@@ -1869,13 +1943,13 @@
   (stack-list stack)
   )
 
-(defun cmt-str (char-ls)
+(vdefun cmt-str (char-ls)
   (cmt-str-aux (make-instance 'stack) (car char-ls) (cdr char-ls)))
 
-(defun cmt-str-regex (char-ls)
+(vdefun cmt-str-regex (char-ls)
   (cmt-str-regex-aux (make-instance 'stack) (car char-ls) (cdr char-ls)))
 
-(defun cl-cmt-str (char-ls)
+(vdefun cl-cmt-str (char-ls)
   (cl-cmt-str-aux (make-instance 'stack) (car char-ls) (cdr char-ls)))
 
 ; When called this returns a list containing all chars from /* to */ and a new
@@ -2009,6 +2083,7 @@
       (match-str-list "for" ls)
       (match-str-list "while" ls)
       (match-str-list "else" ls)
+      (match-str-list "switch" ls)
       (match-str-list "return" ls)))
 
 (defun is-js-ctl-struct (ls)
@@ -2275,6 +2350,9 @@
 (defun is-js-curly-ctl-stmt (ls)
   (and ls (listp ls) (js-curly-ctl-stmtp (car ls) (cdr ls))))
 
+(defun is-js-if-else-chain (ls)
+  (and ls (listp ls) (js-if-else-chainp (car ls) (cdr ls))))
+
 (defun is-js-do-while-stmt (ls)
   (and ls (listp ls) (js-do-while-stmtp (car ls) (cdr ls))))
 
@@ -2470,6 +2548,18 @@
       (pushr acc head) (car tail) (cdr tail) cb))
     ))
 
+(defun xform-js-flat-ctl-stmt-aux (acc head tail cb)
+  (cond
+    ((not head)
+     acc)
+    ((is-paren-group (last acc))
+     (xform-js-flat-ctl-stmt-aux
+      (pushr acc (funcall cb (cons head tail))) nil nil cb))
+    ((not (is-paren-group (last acc)))
+     (xform-js-flat-ctl-stmt-aux
+      (pushr acc head) (car tail) (cdr tail) cb))
+    ))
+
 (defun xform-js-do-while-cgroup-aux (acc head tail cb)
   (cond
     ((not head)
@@ -2509,6 +2599,9 @@
 
 (defun xform-js-curly-ctl-stmt-cgroup (cstmt cb)
   (xform-js-curly-ctl-stmt-cgroup-aux '() (car cstmt) (cdr cstmt) cb))
+
+(defun xform-js-flat-ctl-stmt (cstmt cb)
+  (xform-js-flat-ctl-stmt-aux '() (car cstmt) (cdr cstmt) cb))
 
 (defun xform-js-do-while-cgroup (cstmt cb)
   (xform-js-do-while-cgroup-aux '() (car cstmt) (cdr cstmt) cb))
@@ -2550,10 +2643,11 @@
 (defun finite-match (ls match-fns)
   (finite-match-aux (car ls) (cdr ls) match-fns 0))
 
-(defun finite-repeating-match (ls rmatch-fns ematch-fns &optional zero_plus)
+(defun finite-repeating-match (ls rmatch-fns ematch-fns &key opt-rmatch opt-ematch)
   "Just like finite-match, except we match rmatch-fns in a loop, until it
   returns nil. We then run ematch-fns on the part that rmatch failed to match.
   If rmatch succeeds, this function returns t, otherwise nil"
+  (assert (not (and opt-rmatch opt-ematch)))
   (let ((curls ls)
         (total_size 0)
         (current_rsize 0)
@@ -2569,7 +2663,8 @@
           (go again))
          ((not current_rsize)
           (setf current_esize (finite-match curls ematch-fns))
-          (if (or (not current_esize) (and (= rmatched 0) (not zero_plus)))
+          (if (or (and (not current_esize) (not opt-ematch))
+                  (and (= rmatched 0) (not opt-rmatch)))
               (setf total_size nil)
               (incf total_size current_esize)
               )))
@@ -2578,6 +2673,7 @@
     )
   )
 
+;;; TODO REMOVE THIS
 (defun js-else-if-stmtp (head tail)
       (finite-match (cons head tail)
                          (list
@@ -2586,6 +2682,7 @@
                           (list :m #'is-js-any-ctl-stmt)
                           )))
 
+;;; TODO REMOVE THIS
 (defun js-curly-else-stmtp (head tail)
   (finite-match (cons head tail)
                 (list
@@ -2790,7 +2887,7 @@
                          (stage-when (and (not tail)) acc))
          )
        )
-     (defun ,self-parent (ls)
+     (vdefun ,self-parent (ls)
        (,self '() (car ls) (cdr ls))
        )
      )
@@ -2822,7 +2919,7 @@
                          (stage-when (and (not tail)) acc))
          )
        )
-     (defun ,self-parent (ls)
+     (vdefun ,self-parent (ls)
        (,self '() (car ls) (cdr ls))
        )
      )
@@ -2937,6 +3034,19 @@
           (:do-while xform xform-js-do-while-cgroup)
           )
 
+(defstage "js" "if-else-chain"
+          (:fdef xform xform-js-fdef-cgroup)
+          (:fcall xform xform-fcall-pgroup)
+          ;;; Do we need these? vv
+          (:mbr-chain descend)
+          (:var-bind descend)
+          ;;; Do we need these? ^^
+          (:obj-lit-rec descend)
+          (:curly-ctl xform xform-js-curly-ctl-stmt-cgroup)
+          (:flat-ctl xform xform-js-flat-ctl-stmt)
+          (:do-while xform xform-js-do-while-cgroup)
+          )
+
 
 (defun js-fdef-bindingp (head tail)
   (finite-match (cons head tail)
@@ -2969,6 +3079,35 @@
         (list :o #'is-blank-group))
        (list
         (list :m #'is-word-arr-fcall-vbind-fbind))))
+
+(defun is-if-block (n)
+  (and (listp n) n (match-str-list "if" (car n)))
+  )
+
+(defun is-else-word (n)
+  (and (listp n) n (match-str-list "else" n)))
+
+(defun is-if-block-or-curly-group-or-stmt (n)
+  (or (is-if-block n)
+      (is-curly-group n)
+      ;;; XXX TODO stmt
+      )
+  )
+
+(defun js-if-else-chainp (head tail)
+  (finite-repeating-match
+   (cons head tail)
+   (list
+    (list :m #'is-if-block)
+    (list :o #'is-blank)
+    (list :m #'is-else-word)
+    (list :o #'is-blank)
+    )
+   (list
+    (list :m #'is-if-block-or-curly-group-or-stmt)
+    )
+   )
+  )
 
 (defun is-js-mbr-chain (ls)
   (and ls (listp ls) (js-mbr-chainp (car ls) (cdr ls))))
@@ -3027,6 +3166,9 @@
             )
         (js-obj-lit-recs x)
         x))
+
+(defgrouper group-js-if-else-chain
+    (if (is-js-fdef x) (js-if-else-chains x) x))
 
 
 (defun js-vars (ast)
@@ -3442,6 +3584,19 @@
 (vdefun file-to-forms (input)
   (file-to-forms-impl input))
 
+(defun format-to-file (output fmt input)
+  (let ((out nil)
+        (pathls (str-split "/" output)))
+    (if (> (length pathls) 1)
+        (mkdir (apply #'str-cat (intersperse (popr pathls) "/")))
+        )
+    (setf out (open output :direction :output :if-exists :supersede
+                           :if-does-not-exist :create))
+    (format out fmt input)
+    (finish-output out)
+    (close out)
+    ))
+
 (defun form-to-file-impl (form output)
   (let ((out nil)
         (pathls (str-split "/" output)))
@@ -3719,6 +3874,7 @@
   )
 
 (defun zip2 (l1 l2)
+  (assert (= (length l1) (length l2)))
   (mapcar #'(lambda (a b)
               (list a b)
               )
@@ -4230,7 +4386,7 @@
 (defun match-path (p1 p2)
   (cond
     ((equal p1 p2)
-     ;(format t "p1: ~A ~% p2: ~A ~%" p1 p2)
+     ;(puts "p1: ~A ~% p2: ~A " p1 p2)
      t)
     ((and t)
      nil)
@@ -4295,18 +4451,17 @@
   (paths-by-depth (test-docker-create-index) :pov nil :fmt t))
 
 (defun auto-walk-tree (tree walk)
+  (assert tree)
   (let ((cur tree))
     (do-group (m walk)
       (cond
         ((eql 'd m)
-         (if (listp cur)
-             (setf cur (car cur))
-             )
+         (setf cur (car cur))
+         (assert cur)
          )
         ((eql 'r m)
-         (if (listp cur)
-             (setf cur (cdr cur))
-             )
+         (setf cur (cdr cur))
+         (assert cur)
          )
         )
       )
@@ -4426,11 +4581,11 @@
 
 (defun print-fcall-name (fls path)
   (print (js-refine-path path))
-  (format t "~%name: ~a~%" (char-ls-to-str (get-fcall-name fls)))
+  (puts "~%name: ~a" (char-ls-to-str (get-fcall-name fls)))
   )
 
 (defun print-fcall-args(fls)
-  (format t "name: ~a args: ~a~%" (char-ls-to-str (get-fcall-name fls))
+  (puts "name: ~a args: ~a" (char-ls-to-str (get-fcall-name fls))
           (get-fcall-params fls)))
 
 (defun get-c-fdef-n-args (p)
@@ -4576,7 +4731,7 @@
          ((or (match-any-puncs-ls '("+" "-" "*" "/" "||"
                                     "<<" ">>" ">" "<" ">="
                                     "<=" "==" "===" "!="
-                                    "!=="  "&&" "=") n))
+                                    "!=="  "&&" "=" "?" ":") n))
           (values (gen-ws 1) n (gen-ws 1)))
          ((and fold (> depth 0) (is-js-fdef n))
           (values (gen-nl-ws (* 4 depth))
@@ -4593,11 +4748,154 @@
      )
   )
 
+(defun ast-count-chars (ast)
+  (length (flatten ast))
+  )
+
+(defun never (x)
+  nil
+  )
+
+(defun count-leading-spaces (ls)
+  (let ((c 0)
+        (stop nil)
+        )
+    (do-group (e1 e2 ls)
+      (when (and (not stop) (equal e1 #\Space))
+        (incf c)
+        )
+      (when (not (equal e2 #\Space))
+        (setf stop t)
+        )
+      )
+    c
+    )
+  )
+
+(defun space-indices (ls)
+  (let ((ret '())
+        (ix 0)
+        )
+    (do-group (c ls)
+      (if (equal c #\Space)
+          (pushr! ret ix)
+          )
+      (incf ix)
+      )
+    ret
+    )
+  )
+
+(defun furthest-space (char-ind &optional max-ix)
+  (setf max-ix 80)
+  (let ((ret 0))
+    (do-group (n char-ind)
+      (if (< n max-ix)
+          (setf ret n)
+          )
+      )
+    ret
+    )
+  )
+
+(defun break-at (line pos new-ind)
+  (let ((l1 '())
+        (l2 '())
+        (ix 0)
+        )
+    (do-group (c line)
+      (when (< ix pos)
+        (pushr! l1 c)
+        )
+      (when (= ix pos)
+        (dotimes (i new-ind)
+          (pushr! l2 #\Space)
+          )
+        )
+      (when (> ix pos)
+        (pushr! l2 c)
+        )
+      (incf ix)
+      )
+    (list l1 l2)
+    )
+  )
+
+(defun trim-ws (ln)
+  (let ((rev-ln (reverse ln))
+        )
+    (if (not (equal #\Space (car rev-ln)))
+        (return-from trim-ws ln)
+        )
+    (do-cons (e rev-ln)
+      (when (not (equal #\Space (car e)))
+        (return-from trim-ws (reverse e))
+        )
+      )
+    )
+  )
+
+
+(defun js-ast-break-lines (ast)
+  (setf ast (flatten ast))
+  (let ((line-len 0)
+        (lbroken nil)
+        (indent1 0)
+        (indent2 0)
+        (indent-delta 0)
+        (new-indent 0)
+        (lines (list-split #\Newline ast))
+        (ret-lines '())
+        )
+    (tagbody
+     again
+       (do-group (l1 l2 lines)
+         (when (> (length l1) 80)
+           (setf indent1 (count-leading-spaces l1))
+           (setf indent2 (count-leading-spaces l2))
+           (setf indent-delta (- indent1 indent2))
+           (cond
+             ((> indent-delta 1)
+              (setf new-indent (- indent-delta 2))
+              )
+             ((= indent-delta 1)
+              (setf new-indent 1)
+              )
+             ((<= indent-delta 0)
+              (setf new-indent (+ indent1 2))
+              )
+             )
+            ;;; NOTE: we should not leave trailing WS
+           (destructuring-bind (nl1 nl2)
+               (break-at l1 (furthest-space (space-indices l1)) new-indent)
+             (pushr! ret-lines (trim-ws nl1))
+             (pushr! ret-lines (trim-ws nl2))
+             )
+           )
+         (when (<= (length l1) 80)
+           (pushr! ret-lines l1)
+           )
+         )
+       (cond
+         ((not (= (length lines) (length ret-lines)))
+          (setf lines ret-lines)
+          (setf ret-lines nil)
+          (go again)
+          )
+         ((= (length lines) (length ret-lines))
+          (return-from js-ast-break-lines ret-lines)
+          )
+         )
+       )
+    )
+  )
+
 (defun js-ast-fmt-simtupid (out ast &optional stash-append)
   (let* ((ret nil)
          (idx-bool (js-idx-type-to-test :funcs))
          (fold-stash '())
-         (fold t))
+         (fold t)
+         )
     (setf ret (copy-ast ast
                         #'(lambda (n)
                             (not (is-blank-group n)))))
@@ -4605,7 +4903,21 @@
                          #'identity
                          (js-simtupid-fmt-cb)
                          '()))
-    ret
+    ;;; TODO
+    ;;; We now break all lines that over 80 columns in length.
+    ;;;
+    ;;; Indent Rules:
+    ;;; 1: When we break a line, it must have more indent than preceding line
+    ;;; 2: If possible, it must have less indent than succeeding line
+    ;;; 3: If the new line is >80 cols, break it again, but must have same indent
+    ;;;    as preceding line.
+    ;;;
+    ;;; Break Rules:
+    ;;; 1: Cannot break in the middle of tokens (strings, words, punctuations)
+    ;;; 2: Can break any whitespace/blanks
+    ;;; 3: Want to keep fun-calls' names and parens on same line
+    ;(puts "out: ~a" (js-ast-break-lines ret))
+    (flatten (map 'list #'(lambda (ln) (pushr ln #\Newline)) (js-ast-break-lines ret)))
     )
   )
 
@@ -4740,7 +5052,7 @@
 (defmacro! gen-blank ()
   `(valve #'validate-blank (enclose (gen-ws 1))))
 
-(defun js-to-ast (input)
+(vdefun js-to-ast (input)
   (pipeline input #'cmt-str-regex #'white-space
             #'blanks #'words #'punctuations
             #'nestables
@@ -4754,6 +5066,7 @@
             #'js-curly-ctl-stmts
             #'js-do-while-stmts
             #'js-flat-ctl-stmts
+            #'js-if-else-chains
             ))
 
 (defun cl-to-ast (input)
@@ -4799,7 +5112,7 @@
  ;;;(c-pre-proc-aux '() (car ls) (cdr ls)
   )
 
-(defun c-to-ast (input)
+(vdefun c-to-ast (input)
   (pipeline input #'cmt-str #'white-space
             #'blanks #'words #'punctuations
             #'nestables #'c-fdefs #'c-fcalls))
@@ -5554,10 +5867,11 @@
   (let ((n 0)
         (new-ls '()))
     (do-group (e ls)
-      (pushr! new-ls (list e n))
+      (setf new-ls (cons (list e n) new-ls))
+      ;(pushr! new-ls (list e n))
       (incf n)
       )
-    new-ls
+    (reverse new-ls)
     )
   )
 
@@ -5591,8 +5905,19 @@
     ((and use-index)
      (let* ((dir (str-cat blip-repo-meta repo "/root/" path))
             (commits (file-to-form (str-cat dir "/LOG")))
+            (res nil)
            )
-       (car commits)
+       (setf res (car commits))
+       ;;; Sometimes, we don't actually store the history in
+       ;;; the on-disk cache, for some reason. So we
+       ;;; compensate for this here, with this hack.
+       ;;; TODO root cause this
+       (cond
+         ((not res)
+          (setf res (git-file-latest-commit-legacy repo path))
+          )
+         )
+       res
        )
      )
     )
@@ -5604,7 +5929,8 @@
     (pushdir (str-cat blip-repos repo "/"))
     (setf lc (inferior-shell:run/ss (append (list "git" "--no-pager" "log"
                                                   "--pretty=format:%H"
-                                                  "--name-only" "--no-merges"
+                                                  "--name-only"
+                                                  ;"--no-merges"
                                                   ;(if (and stop-at)
                                                       ;(str-cat stop-at "..HEAD")
                                                       ;"")
@@ -5691,15 +6017,29 @@
      )
     ((and cmp)
      (let* ((dir (str-cat blip-repo-meta repo "/root/" path))
-           (commits (file-to-form (str-cat dir "/LOG")))
-           (youngest-ancestor nil))
-       (do-group (c commits)
-         (cond
-           ((and (equal c commit) (not youngest-ancestor))
-            (setf youngest-ancestor c))
-           ((and (funcall cmp c commit) (not youngest-ancestor))
-            (setf youngest-ancestor c))
-           )
+            (commits (file-to-form (str-cat dir "/LOG")))
+            (youngest-ancestor nil))
+       ;;; Sometimes, we don't actually store the history in
+       ;;; the on-disk cache, for some reason. So we
+       ;;; compensate for this here, with this hack.
+       ;;; TODO root cause this
+       (cond
+         ((not commits)
+          (setf youngest-ancestor
+                (git-file-latest-commit-until-legacy repo path commit))
+          )
+         ((and commits)
+          (do-group (c commits)
+            (cond
+              ((and (equal c commit) (not youngest-ancestor))
+               (setf youngest-ancestor c))
+              ((and (funcall cmp c commit) (not youngest-ancestor))
+               (setf youngest-ancestor c))
+              ((and t)
+               )
+              )
+            )
+          )
          )
        youngest-ancestor
        )
@@ -5779,6 +6119,10 @@
                             (revid (git-file-latest-commit repo file t))
                             (fullpath (str-cat slot "/" revid))
                             (full-src-path (str-cat (cwd) "/" file)))
+                       ;(puts "revid: ~a" revid)
+                       ;(puts "full-src: ~a" full-src-path)
+                       ;(puts "full-path: ~a" fullpath)
+                       (assert revid)
                        (cond
                          ((and (is-file-p full-src-path)
                                (or (and force (file-exists-p fullpath))
@@ -6100,7 +6444,7 @@
   (get-path-with-prefix pref (test-mooremachine-create-index) pov))
 
 (defun format-alist (alist)
-  (map nil #'(lambda (cell) (format t "~a ~a ~%" (car cell) (cdr cell))) alist))
+  (map nil #'(lambda (cell) (puts "~a ~a " (car cell) (cdr cell))) alist))
 
 (defun test-docker-word-count ()
   (format-alist (js-word-count

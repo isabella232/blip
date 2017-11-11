@@ -20,8 +20,11 @@ so either a) prior work must exist under some obscure hard-to-google name or b)
 was deemed (understandably) beneath the publishability threshold.
 
 The code is not very polished, mostly because I used the project as a
-launch-pad to learn lisp. Eventually, I'd like to make it more "idiomatic",
-once we nail down what idiomatic lisp actually looks like.
+launch-pad to learn lisp. As far as style goes, the general rule is that
+anything goes, as long as it doesn't go over 80 columns, and you indent with
+spaces instead of tabs. At some point we should be able to program blip render
+its own code in any style that you specify -- like it does for JS and C already
+--  so that styling doesn't become fodder for flame-wars.
 
 It has grown beyond simple parsing, and is capable of fetching and crawling
 repositories from github and gerrit. It can parse JavaScript, JSON, and C (aside
