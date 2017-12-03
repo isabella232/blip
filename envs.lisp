@@ -154,7 +154,7 @@
        (idx-type-conv #'js-idx-type-to-test)
        (files (all-files repo commit ".js" ,pref ,antipref ,depth))
        (pagesz 70)
-       (ast-fmt #'(lambda (a) (js-ast-fmt nil a :simtupid)))
+       (ast-fmt #'js-dap-like-style)
        (parser #'js-to-ast)
        (parser-suf ".js")
        (parser-pref ,pref)
@@ -216,7 +216,8 @@
        (idx-type-conv #'c-idx-type-to-test)
        (files (all-files repo commit ".c" ,pref ,antipref ,depth))
        (pagesz 70)
-       (ast-fmt #'(lambda (a) (c-ast-fmt nil a :simtupid)))
+       ;(ast-fmt #'(lambda (a) (c-ast-fmt nil a :simtupid)))
+       (ast-fmt #'c-joyent-style)
        (parser #'c-to-ast)
        (parser-suf ".c")
        (parser-pref ,pref)
@@ -577,10 +578,14 @@
 
 
 (defun index-get-subtrees-list (path &optional pov &key page force alt-idx-type)
-  (pre-filter-files path
-    (do-indices (f ix) force alt-idx-type t
-      (index-get-subtrees-impl (list f ix) path (load-ast repo f cmt) pov)
-      )))
+  (let ((ret '()))
+    (pre-filter-files path
+      (do-indices (f ix) force alt-idx-type t
+        (pushr! ret (index-get-subtrees-impl (list f ix) path (load-ast repo f cmt) pov))
+        ))
+    ret
+    )
+  )
 
 (defun index-get-subtree-walks (path &optional pov &key page force alt-idx-type)
   (pre-filter-files path

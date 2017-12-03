@@ -13,6 +13,7 @@
 ;(ql:quickload "cl-graph")
 ;(ql:quickload "vecto")
 (ql:quickload "cl-conspack")
+(ql:quickload "lhstats")
 (ql:quickload "trivial-ssh")
 (ql:quickload "inferior-shell") ; Convenient for synchronous command execution
 (ql:quickload "cl-async") ; Libuv wrapper, convenient for background commands
@@ -382,6 +383,7 @@
 
 (defun pre-load-env (env)
   (setf blip-pre-loaded-env env)
+  nil
   )
 
 (defmacro! puts (fmtstr &rest vars)
@@ -619,274 +621,512 @@
     )
   )
 
-(defun main-impl (argv)
-  (let* ((verb (cadr argv))
-         (nouns (cddr argv)))
+(defvar cli-help-table '())
+
+(defun is-flag-or-param (str)
+  (and str (stringp str) (> (length str) 2)
+       (equal "--" (subseq str 0 2)))
+  )
+
+(defun get-arg (pos nouns)
+  (let ((n (nthcadr pos nouns)))
     (cond
-      ((is-cmd-verb "help")
-       (puts "env-ls")
-       (puts "env-stack ")
-       (puts "top-env ")
-       (puts "pushenv $env-name ")
-       (puts "popenv $env-name ")
-       (puts "index-build [--force] [--type $type] ")
-       (puts "index-prefix $path-prefix [up|down] [--page $pg-num] [--force] ~
-                  [--type $type] ")
-       (puts "index-suffix $path-suffix [up|down] [--page $pg-num] [--force] ~
-                  [--type $type] ")
-       (puts "index-get-subtrees $path [up|down] [--page $pg-num] [--force] ~
-                  [--type $type] ")
-       (puts "index-get-subtrees-str $path [up|down] [--fmt $formatter] ~
-                  [--page $pg-num] [--force] [--type $type] ")
-       (puts "index-word-count $word [up|down] [--page $pg-num] [--force] ~
-                  [--type $type] ")
-       (puts "index-uniq [up|down] [--page $pg-num] [--force] ~
-                  [--type $type] ")
-       (puts "index-path-depth [up|down] [--page $pg-num] [--force] ~
-                  [--type $type] ")
-       (puts "ast-ls-files ")
-       (puts "ast-ls-words [--count] [--pref $prefix] [--force] ")
-       (puts "ast-ls-fdefs [--count] [--pref $prefix] [--force] ")
-       (puts "ast-ls-fbinds [--count] [--pref $prefix] [--force] ")
-       (puts "ast-ls-fcalls [--count] [--pref $prefix] [--force]  ")
-       (puts "ast-parse [--force]  ")
-       (puts "ast-dump-file $file ")
-       (puts "requires-what $filename [--force]")
-       (puts "what-requires $filename [--force]")
-       (puts "bottom-deps [--force]")
-       (puts "top-deps [--force]")
-       (puts "exports-what $filename")
-       (puts "what-exports $funcname")
-       (puts "reconstruct-repo ")
-       (puts "github-users ")
-       (puts "github-user-add $username ")
-       (puts "github-user-rem $username ")
-       (puts "github-user-clone $username ")
-       (puts "github-user-pull $username ")
-       (puts "pull-env ")
-       (puts "strap-repo ")
-       (puts "eval $lisp-file ")
+      ((is-flag-or-param n)
+       (e-puts "Not expecting param or flag arg.")
+       (sb-ext:exit :code -1)
        )
-      ((is-cmd-verb "compute-disk-usage")
-       (let ((date (get-universal-time)))
-         ; Exec du on dirs of interest, crunch/agg output into a table
-         ; Save tuple with date and table.
-         )
+      ((equal nil n)
+       (e-puts "Expecting argument at position ~a." pos)
+       (sb-ext:exit :code -1)
        )
-      ((is-cmd-verb "show-disk-usage")
-       )
-      ((is-cmd-verb "env-ls")
-       (cond
-         ((not (blip-env-cfg-currentp))
-          (quiet-load blip-env-cfg)
-          )
-         )
-       (puts "~A" (file-to-form blip-env-avail))
-       )
-      ((is-cmd-verb "env-stack")
-       (puts "~A" (file-to-form blip-env-stack))
-       )
-      ((is-cmd-verb "top-env")
-       (load-top-env)
-       (puts "~A" (get-env-var 'name))
-       )
-      ((is-cmd-verb "pushenv")
-       (let* ((env-name (string-to-symbol (car nouns)))
-              (env nil)
-              )
-         (if (have-env env-name)
-             (form-to-file (pushr (file-to-form blip-env-stack) env-name)
-                           blip-env-stack))
-         ))
-      ((is-cmd-verb "popenv")
-       (form-to-file (popr (file-to-form blip-env-stack))
-                     blip-env-stack)
-       )
-      ((is-cmd-verb "index-prefix")
-       (load-top-env)
-       (in-index-path-cli (index-prefix path pov :page page :force force
-                                                  :alt-idx-type alt-idx-type))
-       )
-      ((is-cmd-verb "index-suffix")
-       (load-top-env)
-       (in-index-path-cli (index-suffix path pov :page page :force force
-                                                  :alt-idx-type alt-idx-type))
-       )
-      ((is-cmd-verb "index-word-count")
-       (load-top-env)
-       (in-index-path-cli (index-word-count path pov :page page :force force
-                                                      :alt-idx-type alt-idx-type))
-       )
-      ((is-cmd-verb "index-uniq")
-       (load-top-env)
-       (in-index-nopath-cli (index-uniq pov :page page :force force
-                                                  :alt-idx-type alt-idx-type))
-       )
-      ((is-cmd-verb "index-path-depth")
-       (load-top-env)
-       (in-index-nopath-cli (index-path-depth pov :page page :force force
-                                                        :alt-idx-type alt-idx-type))
-       )
-      ((is-cmd-verb "index-print")
-       (load-top-env)
-       (in-index-nopath-cli (index-print pov :page page :force force
-                                                       :alt-idx-type alt-idx-type))
-       )
-      ((is-cmd-verb "index-print-sort")
-       (load-top-env)
-       (in-index-nopath-cli (index-print-sort pov :page page :force force
-                                                       :alt-idx-type alt-idx-type))
-       )
-      ((is-cmd-verb "index-build")
-       (load-top-env)
-       (in-index-nopath-cli (index-build :force force :alt-idx-type alt-idx-type))
-       )
-      ((is-cmd-verb "index-get-subtrees")
-       (load-top-env)
-       (in-index-path-cli (index-get-subtrees path pov :page page :force force
-                                                       :alt-idx-type alt-idx-type))
-       )
-      ((is-cmd-verb "index-get-subtrees-str")
-       (load-top-env)
-       (in-index-path-cli (index-get-subtrees-str path pov :page page :force force
-                                                           :alt-idx-type alt-idx-type))
-       )
-      ((is-cmd-verb "ast-ls-files")
-       (load-top-env)
-       (let ((files (ast-ls-files)))
-         (print-ln (if (car nouns) (length files) files))
-         )
-       )
-      ((is-cmd-verb "ast-ls-fcalls")
-       (load-top-env)
-       (in-ast-ls-cli (print-ln (ast-ls-fcalls count :pref pref :force force)))
-       )
-      ((is-cmd-verb "ast-ls-fdefs")
-       (load-top-env)
-       (in-ast-ls-cli (print-ln (ast-ls-fdefs count :pref pref :force force)))
-       )
-      ((is-cmd-verb "ast-ls-words")
-       (load-top-env)
-       (in-ast-ls-cli (print-ln (ast-ls-words count :pref pref :force force)))
-       )
-      ((is-cmd-verb "ast-ls-fbinds")
-       (load-top-env)
-       (in-ast-ls-cli (print-ln (ast-ls-fbinds count :pref pref :force force)))
-       )
-      ((is-cmd-verb "ast-parse")
-       (load-top-env)
-       (ast-parse (and (car nouns)))
-       )
-      ((is-cmd-verb "ast-dump-file")
-       (load-top-env)
-       (puts "~d"
-        (char-ls-to-str
-         (flatten
-           (load-ast (get-env-var 'repo) (car nouns) (get-env-var 'commit)))))
-       )
-      ((is-cmd-verb "what-requires")
-       (load-top-env)
-       (print-ln (ast-what-requires (car nouns) :force (cadr nouns)))
-       )
-      ((is-cmd-verb "requires-what")
-       (load-top-env)
-       (print-ln (ast-requires-what (car nouns) :force (cadr nouns)))
-       )
-      ((is-cmd-verb "bottom-deps")
-       (load-top-env)
-       (print-ln (ast-bottom-deps :force (car nouns)))
-       )
-      ((is-cmd-verb "top-deps")
-       (load-top-env)
-       (print-ln (ast-top-deps :force (car nouns)))
-       )
-      ((is-cmd-verb "requires-what")
-       (load-top-env)
-       (print-ln (ast-requires-what (car nouns) :force (cadr nouns)))
-       )
-      ((is-cmd-verb "what-exports")
-       (load-top-env)
-       (print-ln (ast-what-exports (car nouns)))
-       )
-      ((is-cmd-verb "exports-what")
-       (load-top-env)
-       (print-ln (ast-exports-what (car nouns)))
-       )
-      ((is-cmd-verb "reconstruct-repo")
-       (load-top-env)
-       (reconstruct-repo)
-       )
-      ((is-cmd-verb "outputs")
-       )
-      ((is-cmd-verb "jobs")
-       )
-      ((is-cmd-verb "xform")
-       (load-top-env)
-       (run-xform nouns))
-      ((is-cmd-verb "github-users")
-       (print-ln (file-to-form blip-github-users))
-       )
-      ((is-cmd-verb "github-user-add")
-       (let ((users (file-to-form blip-github-users)))
-         (cond
-           ((and (car nouns) (not (member (car nouns) users :test #'equal)))
-            (pushr! users (car nouns))
-            (form-to-file users blip-github-users)
-            )
-           )
-         )
-       )
-      ((is-cmd-verb "github-user-rem")
-       (let ((users (file-to-form blip-github-users)))
-         (cond
-           ((and (car nouns) (member (car nouns) users :test #'equal))
-            (setf users (remove-if  #'(lambda (u) (string= u (car nouns)))
-                                    users))
-            (form-to-file users blip-github-users)
-            )
-           )
-         )
-       )
-      ((is-cmd-verb "github-user-clone")
-       (cond
-         ((car nouns)
-          (cache-svc-user-repo-list "github" (car nouns))
-          (github-clone-user-all-bg (car nouns))
-          ))
-       )
-      ((is-cmd-verb "github-user-pull")
-       (cond
-         ((car nouns)
-          (cache-svc-user-repo-list "github" (car nouns))
-          (github-pull-user-all-bg (car nouns))
-          ))
-       )
-      ((is-cmd-verb "pull-env")
-       (load-top-env)
-       (pushdir (str-cat blip-repos (get-env-var 'repo)))
-       (inferior-shell:run/ss (list "git" "pull"))
-       (popdir)
-       )
-      ((is-cmd-verb "strap-repo")
-       (load-top-env)
-       (strap-git-repo (get-env-var 'repo))
-       )
-      ((is-cmd-verb "eval")
-       (load-top-env)
-       (if (cadr nouns)
-           (form-to-file (eval (read-from-string (car nouns)))
-                         (str-cat blip-root (car nouns)))
-           (print (eval (read-from-string (car nouns))))
-           )
-       )
-      ((is-cmd-verb "sleep")
-       (sleep (parse-integer (car nouns)))
+      )
+    n
+    )
+  )
+
+(defun get-opt-arg (pos nouns)
+  (let ((n (nthcadr pos nouns)))
+    (cond
+      ((is-flag-or-param n)
+       nil
        )
       ((and t)
-       (puts "Bad verb!")
-       (sb-ext:exit :code -1))
+       n
+       )
       )
-    ))
+    )
+  )
+
+(defun get-flag-arg (name nouns)
+  (do-group (n nouns)
+    (cond
+      ((and (is-flag-or-param n)
+            (equal name (subseq n 2 (length n))))
+       (return-from get-flag-arg t)
+       )
+      )
+    )
+  nil
+  )
+
+(defun get-param-arg (name nouns)
+  (do-cons (ns nouns)
+    (let ((n (car ns))
+          (n+1 (cadr ns)))
+      (cond
+        ((and (is-flag-or-param n)
+              (equal name (subseq n 2 (length n))))
+         (cond
+           ((not (is-flag-or-param n+1))
+            (return-from get-param-arg (cadr ns))
+            )
+           ((is-flag-or-param n+1)
+            (e-puts "Expect an argument for param ~a" n)
+            (sb-ext:exit :code -1)
+            )
+           )
+         )
+        )
+      )
+    )
+  nil
+  )
+
+(defmacro! def-cli-verb (name &key args opt-args flags
+                              params body help)
+  "This defines a new cli command. Args are the non-optional arguments. They are
+   simple strings, and can't start with '--'. opt-args are optional args that
+   come right after args. flags are any strings that start with '--' and don't
+   an argument. params are any strings that start with '--' and do take an
+   argument. body is just a block of code that will be executed.
+
+   This macro also builds up the list that will be used to print the
+   help-output. You can't define a help verb -- that gets defined implicitly.
+   You specify an alternative help message for the command.
+
+   Every name _must_ be unique, even if they are of different types.
+
+   Use this macro inside of the def-cli macro.
+
+   This macro expects two variables pre-defined in its scope: a string named
+   'verb' and an argv list named 'nouns'."
+  (let ((name-list '())
+        (help-rec '())
+        (lex-bindings '((noun nouns)))
+        (arg-num 0)
+        )
+    (pushr! help-rec name)
+    (do-group (a args)
+      (assert (not (member a name-list)))
+      (pushr! name-list a)
+      (pushr! help-rec a)
+      (pushr! lex-bindings (list (string-to-symbol a)
+                                 (list 'get-arg arg-num 'nouns)))
+      (incf arg-num)
+      )
+    (do-group (a opt-args)
+      (assert (not (member a name-list)))
+      (pushr! name-list a)
+      (pushr! help-rec (str-cat "[" a "]"))
+      (pushr! lex-bindings (list (string-to-symbol a)
+                                 (list 'get-opt-arg arg-num 'nouns)))
+      (incf arg-num)
+      )
+    (setf arg-num 0)
+    (do-group (a flags)
+      (assert (not (member a name-list)))
+      (pushr! name-list a)
+      (pushr! help-rec (str-cat "--" a))
+      (pushr! lex-bindings (list (string-to-symbol (str-replace "--" "" a))
+                                 (list 'get-flag-arg a 'nouns)))
+      )
+    (do-group (a params)
+      (assert (not (member a name-list)))
+      (pushr! name-list a)
+      (pushr! help-rec (str-cat "--" a))
+      (pushr! help-rec (str-cat "$" a))
+      (pushr! lex-bindings (list (string-to-symbol (str-replace "--" "" a))
+                                 (list 'get-param-arg a 'nouns)))
+      )
+    (if (and help)
+        (setf help-rec help)
+        )
+    (pushr! cli-help-table help-rec)
+    `(if (is-cmd-verb ,name)
+         (let (,@lex-bindings)
+           ,@body
+           (return)
+           )
+         )
+    )
+  )
+
+(defmacro! def-cli (verb nouns &body body)
+  `(block nil
+     (let ((verb ,verb) (nouns ,nouns))
+       ,@body
+       (if (is-cmd-verb "help")
+           (progn
+             (do-group (e cli-help-table)
+               (puts "~a" (apply #'str-cat (flatten (intersperse e " " t))))
+               )
+             (return)
+             )
+           )
+       (e-puts "Bad verb!")
+       (sb-ext:exit :code -1)
+       )
+     )
+  )
+
+(defun main-impl (argv)
+  (def-cli (cadr argv) (cddr argv)
+    (def-cli-verb "env-ls"
+      :body ((cond
+               ((not (blip-env-cfg-currentp))
+                (quiet-load blip-env-cfg)
+                )
+               )
+             (puts "~A" (file-to-form blip-env-avail))
+             )
+      )
+    (def-cli-verb "env-stack"
+      :body ((puts "~A" (file-to-form blip-env-stack)))
+     )
+    (def-cli-verb "top-env"
+      :body ((load-top-env)
+             (puts "~A" (get-env-var 'name))
+             )
+     )
+    (def-cli-verb "pushenv"
+      :args ("env-name")
+      :body (
+             (let ((env nil))
+               (if (have-env env-name)
+                   (form-to-file (pushr (file-to-form blip-env-stack)
+                                        env-name)
+                                 blip-env-stack)
+                   )
+               )
+             )
+      )
+    (def-cli-verb "popenv"
+      :body (
+             (form-to-file (popr (file-to-form blip-env-stack))
+                           blip-env-stack)
+             )
+     )
+    (def-cli-verb "index-prefix"
+      :args ("path")
+      :opt-args ("pov")
+      :flags ("force")
+      :params ("page" "type")
+      :body (
+             (load-top-env)
+             (index-prefix path (string-to-keyword pov)
+                           :page page :force force
+                           :alt-idx-type type)
+             )
+     )
+    (def-cli-verb "index-suffix"
+      :args ("path")
+      :opt-args ("pov")
+      :flags ("force")
+      :params ("page" "type")
+      :body (
+             (load-top-env)
+             (index-suffix path (string-to-keyword pov)
+                           :page page :force force
+                           :alt-idx-type type)
+             )
+      )
+    (def-cli-verb "index-word-count"
+      :args ("path")
+      :opt-args ("pov")
+      :flags ("force")
+      :params ("page" "type")
+      :body (
+             (load-top-env)
+             (index-word-count path (string-to-keyword pov)
+                               :page page :force force
+                               :alt-idx-type type)
+             )
+      )
+    (def-cli-verb "index-uniq"
+      :opt-args ("pov")
+      :flags ("force")
+      :params ("page" "type")
+      :body (
+             (load-top-env)
+             (index-uniq (string-to-keyword pov)
+                               :page page :force force
+                               :alt-idx-type type)
+             )
+      )
+    (def-cli-verb "index-path-depth"
+      :opt-args ("pov")
+      :flags ("force")
+      :params ("page" "type")
+      :body (
+             (load-top-env)
+             (index-path-depth (string-to-keyword pov)
+                         :page page :force force
+                         :alt-idx-type type)
+             )
+      )
+    (def-cli-verb "index-print"
+      :opt-args ("pov")
+      :flags ("force")
+      :params ("page" "type")
+      :body (
+             (load-top-env)
+             (index-print (string-to-keyword pov)
+                               :page page :force force
+                               :alt-idx-type type)
+             )
+      )
+    (def-cli-verb "index-print-sort"
+      :opt-args ("pov")
+      :flags ("force")
+      :params ("page" "type")
+      :body (
+             (load-top-env)
+             (index-print-sort (string-to-keyword pov)
+                          :page page :force force
+                          :alt-idx-type type)
+             )
+      )
+    (def-cli-verb "index-build"
+      :flags ("force")
+      :params ("type")
+      :body (
+             (load-top-env)
+             (index-build :force force :alt-idx-type type)
+             )
+      )
+    (def-cli-verb "index-get-subtrees"
+      :args ("path")
+      :opt-args ("pov")
+      :flags ("force")
+      :params ("page" "type")
+      :body (
+             (load-top-env)
+             (index-get-subtrees path (string-to-keyword pov)
+                                 :page page :force force
+                                 :alt-idx-type type)
+             )
+      )
+    (def-cli-verb "index-get-subtrees-str"
+      :args ("path")
+      :opt-args ("pov")
+      :flags ("force")
+      :params ("page" "type")
+      :body (
+             (load-top-env)
+             (index-get-subtrees-str path (string-to-keyword pov)
+                                     :page page :force force
+                                     :alt-idx-type type)
+             )
+      )
+    (def-cli-verb "ast-ls-files"
+      :flags ("count")
+      :body (
+             (load-top-env)
+             (let ((files (ast-ls-files)))
+               (print-ln (if count (length files) files))
+               )
+             )
+     )
+    (def-cli-verb "ast-ls-fcalls"
+      :flags ("count" "force")
+      :params ("pref")
+      :body (
+             (load-top-env)
+             (print-ln (ast-ls-fcalls count :pref pref :force force))
+             )
+     )
+    (def-cli-verb "ast-ls-fdefs"
+      :flags ("count" "force")
+      :params ("pref")
+      :body (
+             (load-top-env)
+             (print-ln (ast-ls-fdefs count :pref pref :force force))
+             )
+     )
+    (def-cli-verb "ast-ls-words"
+      :flags ("count" "force")
+      :params ("pref")
+      :body (
+             (load-top-env)
+             (print-ln (ast-ls-words count :pref pref :force force))
+             )
+      )
+    (def-cli-verb "ast-ls-fbinds"
+      :flags ("count" "force")
+      :params ("pref")
+      :body (
+             (load-top-env)
+             (print-ln (ast-ls-fbinds count :pref pref :force force))
+             )
+      )
+    (def-cli-verb "ast-parse"
+      :flags ("force")
+      :body (
+             (load-top-env)
+             (ast-parse force)
+             )
+     )
+    (def-cli-verb "ast-dump-file"
+      :args ("file")
+      :body (
+             (load-top-env)
+             (puts "~d"
+                   (char-ls-to-str
+                    (flatten
+                      (load-ast (get-env-var 'repo)
+                                file
+                                (get-env-var 'commit)))))
+             )
+     )
+    (def-cli-verb "what-requires"
+      :args ("file")
+      :flags ("force")
+      :body (
+             (load-top-env)
+             (print-ln (ast-what-requires file :force force))
+             )
+     )
+    (def-cli-verb "requires-what"
+      :args ("file")
+      :flags ("force")
+      :body (
+             (load-top-env)
+             (print-ln (ast-requires-what file :force force))
+             )
+      )
+    (def-cli-verb "bottom-deps"
+      :args ("file")
+      :flags ("force")
+      :body (
+             (load-top-env)
+             (print-ln (ast-bottom-deps :force force))
+             )
+     )
+    (def-cli-verb "top-deps"
+      :flags ("force")
+      :body (
+             (load-top-env)
+             (print-ln (ast-top-deps :force force))
+             )
+     )
+    (def-cli-verb  "what-exports"
+      :args ("name")
+      :body (
+             (load-top-env)
+             (print-ln (ast-what-exports name))
+             )
+     )
+    (def-cli-verb  "exports-what"
+      :args ("name")
+      :body (
+             (load-top-env)
+             (print-ln (ast-exports-what name))
+             )
+      )
+    (def-cli-verb "reconstruct-repo"
+      :body (
+             (load-top-env)
+             (reconstruct-repo)
+             )
+     )
+    (def-cli-verb "xform"
+      :help ("xform" "-v" "xform-name" "args...")
+      :body (
+             (load-top-env)
+             (run-xform nouns)
+             )
+      )
+    (def-cli-verb "github-users"
+      :body ((print-ln (file-to-form blip-github-users)))
+     )
+    (def-cli-verb "github-user-add"
+      :args ("user-name")
+      :body (
+             (let ((users (file-to-form blip-github-users)))
+               (cond
+                 ((and user-name (not (member user-name users :test #'equal)))
+                  (pushr! users user-name)
+                  (form-to-file users blip-github-users)
+                  )
+                 )
+               )
+             )
+     )
+    (def-cli-verb "github-user-rem"
+      :args ("user-name")
+      :body (
+             (let ((users (file-to-form blip-github-users)))
+               (cond
+                 ((and user-name (member user-name users :test #'equal))
+                  (setf users (remove-if  #'(lambda (u) (string= u user-name))
+                                          users))
+                  (form-to-file users blip-github-users)
+                  )
+                 )
+               )
+             )
+      )
+    (def-cli-verb "github-user-clone"
+      :args ("user-name")
+      :body (
+             (cond
+               ((and user-name)
+                (cache-svc-user-repo-list "github" user-name)
+                (github-clone-user-all-bg user-name)
+                ))
+             )
+      )
+    (def-cli-verb "github-user-pull"
+      :args ("user-name")
+      :body (
+             (cond
+               ((and user-name)
+                (cache-svc-user-repo-list "github" user-name)
+                (github-pull-user-all-bg user-name)
+                ))
+             )
+      )
+    (def-cli-verb "pull-env"
+      :body (
+             (load-top-env)
+             (pushdir (str-cat blip-repos (get-env-var 'repo)))
+             (inferior-shell:run/ss (list "git" "pull"))
+             (popdir)
+             )
+     )
+    (def-cli-verb "strap-repo"
+      :body (
+             (load-top-env)
+             (strap-git-repo (get-env-var 'repo))
+             )
+     )
+    (def-cli-verb "eval"
+      ;;; WTF does this do?
+      :body (
+             (load-top-env)
+             (if (cadr nouns)
+                 (form-to-file (eval (read-from-string (car nouns)))
+                               (str-cat blip-root (car nouns)))
+                 (print (eval (read-from-string (car nouns))))
+                 )
+             )
+     )
+    (def-cli-verb "sleep"
+      :args ("seconds")
+      :body ((sleep (parse-integer seconds)))
+     )
+    )
+  )
 
 (defun main ()
   "The main entry point for this program."
@@ -1345,7 +1585,8 @@
 (defun is-white-space (c)
   "Test if a character is white space"
   (and c (characterp c)
-       (or (CHAR= c #\Space) (CHAR= c #\Tab) (CHAR= c #\Newline))))
+       (or (CHAR= c #\Space) (CHAR= c #\Tab) (CHAR= c #\Newline)
+           (CHAR= c #\Return))))
 
 
 (defun white-space-list (acc head tail)
@@ -1492,7 +1733,23 @@
            (CHAR= c #\]) (CHAR= c #\;) (CHAR= c #\,) (CHAR= c #\.) (CHAR= c #\:)
            (CHAR= c #\?) (CHAR= c #\<) (CHAR= c #\>) (CHAR= c #\=) (CHAR= c #\+)
            (CHAR= c #\-) (CHAR= c #\*) (CHAR= c #\/) (CHAR= c #\!) (CHAR= c #\~)
-           (CHAR= c #\%) (CHAR= c #\|) (CHAR= c #\&) (CHAR= c #\^))))
+           (CHAR= c #\%) (CHAR= c #\|) (CHAR= c #\&) (CHAR= c #\^) (CHAR= c #\#))))
+
+(defun is-number (c)
+  (and c (characterp c)
+       (or (CHAR= c #\0)
+           (CHAR= c #\1)
+           (CHAR= c #\2)
+           (CHAR= c #\3)
+           (CHAR= c #\4)
+           (CHAR= c #\5)
+           (CHAR= c #\6)
+           (CHAR= c #\7)
+           (CHAR= c #\8)
+           (CHAR= c #\9)
+           )
+       )
+  )
 
 (defun is-cl-punctuation (c)
   (and c (character c)
@@ -2078,7 +2335,7 @@
 (defun match-str-list (s ls)
   (equal (str-to-char-ls s) ls))
 
-(defun is-ctl-struct (ls)
+(defun is-ctl-struct-name (ls)
   (or (match-str-list "if" ls)
       (match-str-list "for" ls)
       (match-str-list "while" ls)
@@ -2086,8 +2343,8 @@
       (match-str-list "switch" ls)
       (match-str-list "return" ls)))
 
-(defun is-js-ctl-struct (ls)
-  (or (is-ctl-struct ls)
+(defun is-js-ctl-struct-name (ls)
+  (or (is-ctl-struct-name ls)
       (match-str-list "try" ls)
       (match-str-list "catch" ls)))
 
@@ -2104,10 +2361,10 @@
 (validate-x validate-word is-word-char)
 
 (defun is-c-func-name (ls)
-  (and (is-word-group ls) (not (is-ctl-struct ls))))
+  (and (is-word-group ls) (not (is-ctl-struct-name ls))))
 
 (defun is-js-func-name (ls)
-  (and (is-word-group ls) (not (is-js-ctl-struct ls))))
+  (and (is-word-group ls) (not (is-js-ctl-struct-name ls))))
 
 (defun is-white-space-group (ls)
   (and (listp ls) ls (is-white-space (car ls))))
@@ -2150,6 +2407,10 @@
          )
        )
     )
+  )
+
+(defun is-comma (n)
+  (match-punc-ls "," n)
   )
 
 (defun is-stmt-aux (ls count)
@@ -2238,6 +2499,10 @@
 
 (defun is-dot (ls)
   (and (is-punctuation-group ls) (= 1 (length ls)) (CHAR= #\. (car ls)))
+  )
+
+(defun is-semi (ls)
+  (and (is-punctuation-group ls) (= 1 (length ls)) (CHAR= #\; (car ls)))
   )
 
 (defun is-word-arr-fcall-vbind-fbind (ls)
@@ -2366,7 +2631,8 @@
   (and ls (listp ls) (not (is-js-curly-ctl-stmt ls)) (is-ctl-word (car ls))))
 
 (defun is-js-any-ctl-stmt (ls)
-  (or (is-js-curly-ctl-stmt ls) (is-js-flat-ctl-stmt ls)))
+  (or (is-js-curly-ctl-stmt ls) (is-js-flat-ctl-stmt ls)
+      (is-js-do-while-stmt ls) (is-js-if-else-chain ls)))
 
 (defun is-js-fdef-binding (ls)
   (and ls (listp ls) (js-fdef-bindingp (car ls) (cdr ls))))
@@ -2673,25 +2939,7 @@
     )
   )
 
-;;; TODO REMOVE THIS
-(defun js-else-if-stmtp (head tail)
-      (finite-match (cons head tail)
-                         (list
-                          (list :m #'(lambda (x) (match-str-list "else" x)))
-                          (list :o #'is-blank-group)
-                          (list :m #'is-js-any-ctl-stmt)
-                          )))
 
-;;; TODO REMOVE THIS
-(defun js-curly-else-stmtp (head tail)
-  (finite-match (cons head tail)
-                (list
-                 (list :m #'(lambda (x) (match-str-list "else" x)))
-                 (list :o #'is-blank-group)
-                 (list :m #'is-js-any-ctl-stmt)
-                 (list :o #'is-blank-group)
-                 (list :m #'is-curly-group)
-                 )))
 
 (defun js-curly-ctl-stmtp (head tail)
   (finite-match (cons head tail)
@@ -4450,16 +4698,22 @@
 (defun test-pbd ()
   (paths-by-depth (test-docker-create-index) :pov nil :fmt t))
 
-(defun auto-walk-tree (tree walk)
+(defun auto-walk-tree (tree walk &key mutate-node)
   (assert tree)
   (let ((cur tree))
-    (do-group (m walk)
+    (do-group (m n walk)
       (cond
         ((eql 'd m)
+         (if (and mutate-node (not n))
+             (setf (car cur) (funcall mutate-node (car cur)))
+             )
          (setf cur (car cur))
          (assert cur)
          )
         ((eql 'r m)
+         (if (and mutate-node (not n))
+             (setf (cdr cur) (funcall mutate-node (cdr cur)))
+             )
          (setf cur (cdr cur))
          (assert cur)
          )
@@ -4666,7 +4920,7 @@
   )
 
 (defun gen-ws (ns)
-  (gen-ws-aux '() ns))
+  (list (gen-ws-aux '() ns)))
 
 (defun gen-nl-ws-aux (acc n)
   (cond
@@ -4679,7 +4933,7 @@
   )
 
 (defun gen-nl-ws (ns)
-  (gen-nl-ws-aux '(#\Newline) ns))
+  (list (gen-nl-ws-aux '(#\Newline) ns)))
 
 
 (defun is-js-hyperlink (n)
@@ -4689,64 +4943,6 @@
        (and (characterp (caddr n)) (CHAR= (caddr n) #\<))
        (and (characterp (cadddr n)) (CHAR= (cadddr n) #\Space))
        ))
-
-(defmacro! js-simtupid-fmt-cb ()
-  "We define this lambda as a macro, so that we don't have to manually inline it
-   in the parent."
-  `(lambda (prev n rest s)
-     (let* ((depth 0))
-       (incf depth (count-if #'is-curly-group s))
-       (cond
-         ((is-js-hyperlink (car (last s)))
-          (values n))
-         ((and (is-punctuation-group n) (CHAR= #\; (car n))
-               (or (and (characterp (car rest)) (CHAR/= #\} (car rest)))
-                   (not (characterp (car rest)))))
-          (values n (gen-nl-ws (* 4 depth))))
-         ((and (characterp n) (CHAR= #\{ n)
-               (or (and (characterp (car rest)) (CHAR/= #\} (car rest)))
-                   (not (characterp (car rest)))))
-          (values (gen-ws 1) n (gen-nl-ws (* 4 depth))))
-         ((and (characterp n) (CHAR= #\{ n)
-               (and (characterp (car rest)) (CHAR= #\})))
-          (values (gen-ws 1) n (gen-nl-ws (* 4 (- depth 1)))))
-         ((and (characterp n) (CHAR= #\} n))
-          (values (gen-nl-ws (* 4 (- depth 1))) n (gen-nl-ws (* 4 (- depth 1)))))
-         ((and (is-word-group prev)
-               (or (is-js-var-binding n) (is-str n)
-                   (is-js-mbr-chain n) (is-js-fcall n)
-                   (is-word-group n))
-               )
-          (values (gen-ws 1) n))
-         ((is-js-ctl-struct n)
-          (values n (gen-ws 1)))
-         ((and (is-str n) (is-str prev))
-          (values (gen-nl-ws (* 4 depth)) n))
-         ((and (or (is-word-group n) (is-jsarr n)) ;(is-punctuation-group (car rest))
-               (or (match-punc-ls "," prev)
-                   (is-word-group prev)))
-          (values (gen-ws 1) n))
-         ((match-punc-ls "," n)
-          (values n (gen-ws 1)))
-         ((or (match-any-puncs-ls '("+" "-" "*" "/" "||"
-                                    "<<" ">>" ">" "<" ">="
-                                    "<=" "==" "===" "!="
-                                    "!=="  "&&" "=" "?" ":") n))
-          (values (gen-ws 1) n (gen-ws 1)))
-         ((and fold (> depth 0) (is-js-fdef n))
-          (values (gen-nl-ws (* 4 depth))
-                  (append (str-to-char-ls "<<< ")
-                          (get-js-fdef-name n)
-                          (str-to-char-ls "{}/ >>>") (gen-nl-ws (* 4 depth)))))
-         ((and fold (> depth 0) (is-js-fdef-binding n))
-          (values (gen-nl-ws (* 4 depth)) (str-to-char-ls "<<< ")
-                  (get-js-fbind-name n) (str-to-char-ls "=/ >>>")))
-         ((and t)
-          (values n))
-         )
-       )
-     )
-  )
 
 (defun ast-count-chars (ast)
   (length (flatten ast))
@@ -4835,197 +5031,810 @@
     )
   )
 
+(defmacro! is-breakable (x &optional stack)
+  `(funcall breakable-test ,x ,stack)
+  )
 
-(defun js-ast-break-lines (ast)
-  (setf ast (flatten ast))
-  (let ((line-len 0)
-        (lbroken nil)
-        (indent1 0)
-        (indent2 0)
-        (indent-delta 0)
-        (new-indent 0)
-        (lines (list-split #\Newline ast))
-        (ret-lines '())
+(defmacro! is-unbreakable-char (x)
+  `(and (characterp ,x) (not (is-breakable ,x)))
+  )
+
+
+(defun build-break-table (ast max-line-len breakable-test)
+  (let ((table '())
+        (line-num 1)
+        (col-num 1)
+        (pre-brk 0)
+        (pre-brk-walk '())
+        (post-brk 0)
+        (count-lws t)
+        (lead-ws 0)
         )
-    (tagbody
-     again
-       (do-group (l1 l2 lines)
-         (when (> (length l1) 80)
-           (setf indent1 (count-leading-spaces l1))
-           (setf indent2 (count-leading-spaces l2))
-           (setf indent-delta (- indent1 indent2))
-           (cond
-             ((> indent-delta 1)
-              (setf new-indent (- indent-delta 2))
-              )
-             ((= indent-delta 1)
-              (setf new-indent 1)
-              )
-             ((<= indent-delta 0)
-              (setf new-indent (+ indent1 2))
-              )
-             )
-            ;;; NOTE: we should not leave trailing WS
-           (destructuring-bind (nl1 nl2)
-               (break-at l1 (furthest-space (space-indices l1)) new-indent)
-             (pushr! ret-lines (trim-ws nl1))
-             (pushr! ret-lines (trim-ws nl2))
-             )
-           )
-         (when (<= (length l1) 80)
-           (pushr! ret-lines l1)
-           )
-         )
-       (cond
-         ((not (= (length lines) (length ret-lines)))
-          (setf lines ret-lines)
-          (setf ret-lines nil)
-          (go again)
-          )
-         ((= (length lines) (length ret-lines))
-          (return-from js-ast-break-lines ret-lines)
-          )
-         )
-       )
+    (walk-tree ast
+               #'(lambda (n)
+                   (or (is-unbreakable-char n) (is-breakable n))
+                   )
+               #'(lambda (n stack w)
+                   (cond
+                     ((and (is-unbreakable-char n) (CHAR= #\Newline n))
+                      (pushr! table (list line-num col-num pre-brk post-brk
+                                          lead-ws pre-brk-walk))
+                      (incf line-num)
+                      (setf col-num 1)
+                      (setf lead-ws 0)
+                      (setf pre-brk 0)
+                      (setf pre-brk-walk '())
+                      (setf post-brk 0)
+                      (setf count-lws t)
+                      )
+                     ((and (is-unbreakable-char n) (CHAR= n #\Space) count-lws)
+                      (incf lead-ws)
+                      (incf col-num)
+                      )
+                     ((and (is-unbreakable-char n) (not (CHAR= n #\Space)) count-lws)
+                      (setf count-lws nil)
+                      (incf col-num)
+                      )
+                     ((and (is-unbreakable-char n) (not (CHAR= #\Newline n)))
+                      (incf col-num)
+                      )
+                     ((is-breakable n stack)
+                      (cond
+                        ((<= (+ (length (flatten n)) col-num) max-line-len)
+                         (incf pre-brk)
+                         (setf pre-brk-walk w)
+                         )
+                        ((> (+ (length (flatten n)) col-num) max-line-len)
+                         (incf post-brk)
+                         )
+                        )
+                      )
+                     )
+                   )
+               '() '())
+    table
     )
   )
 
-(defun js-ast-fmt-simtupid (out ast &optional stash-append)
-  (let* ((ret nil)
-         (idx-bool (js-idx-type-to-test :funcs))
-         (fold-stash '())
-         (fold t)
+(defun fmt-xform-string (x)
+  x)
+
+(defun have-breakable-overflowing-lines (tbl max-ln)
+  (let ((ret nil))
+    (do-group (r tbl)
+      (cond
+        ((and (> (cadr r) max-ln)
+              (> (caddr r) 0))
+         (setf ret t)
+         (return)
          )
-    (setf ret (copy-ast ast
-                        #'(lambda (n)
-                            (not (is-blank-group n)))))
-    (setf ret (xform-ast ret
-                         #'identity
-                         (js-simtupid-fmt-cb)
-                         '()))
-    ;;; TODO
-    ;;; We now break all lines that over 80 columns in length.
-    ;;;
-    ;;; Indent Rules:
-    ;;; 1: When we break a line, it must have more indent than preceding line
-    ;;; 2: If possible, it must have less indent than succeeding line
-    ;;; 3: If the new line is >80 cols, break it again, but must have same indent
-    ;;;    as preceding line.
-    ;;;
-    ;;; Break Rules:
-    ;;; 1: Cannot break in the middle of tokens (strings, words, punctuations)
-    ;;; 2: Can break any whitespace/blanks
-    ;;; 3: Want to keep fun-calls' names and parens on same line
-    ;(puts "out: ~a" (js-ast-break-lines ret))
-    (flatten (map 'list #'(lambda (ln) (pushr ln #\Newline)) (js-ast-break-lines ret)))
-    )
-  )
-
-(defun js-ast-fmt-simple (out ast &optional stash-append)
-  (let* ((ret nil)
-         (idx-bool (js-idx-type-to-test :funcs))
-         (fold-stash '())
-         (fold nil))
-    (setf ret (copy-ast ast
-                        #'(lambda (n)
-                            (not (is-blank-group n)))))
-    (setf ret (xform-ast ret
-                         #'identity
-                         (js-simtupid-fmt-cb)
-                         '()))
-    ret
-    )
-  )
-
-(defun c-simtupid-fmt-cb (prev n rest s)
-  (let* ((depth 0))
-    (incf depth (count-if #'is-curly-group s))
-    (cond
-      ((and (is-punctuation-group n) (CHAR= #\; (car n))
-            (or (and (characterp (car rest)) (CHAR/= #\} (car rest)))
-                (not (characterp (car rest)))))
-       (values n (gen-nl-ws (* 4 depth))))
-      ((and (characterp n) (CHAR= #\{ n)
-            (or (and (characterp (car rest)) (CHAR/= #\} (car rest)))
-                (not (characterp (car rest)))))
-       (values (gen-ws 1) n (gen-nl-ws (* 4 depth))))
-      ((and (characterp n) (CHAR= #\{ n)
-            (and (characterp (car rest)) (CHAR= #\})))
-       ;(print (last s))
-       (values (gen-ws 1) n (gen-nl-ws (* 4 (- depth 1)))))
-      ((and (characterp n) (CHAR= #\} n))
-       (values (gen-nl-ws (* 4 (- depth 1))) n (gen-nl-ws (* 4 (- depth 1)))))
-      ((is-ctl-struct n)
-       (values n (gen-ws 1)))
-      ((and (is-str n) (is-word-group prev))
-       (values (gen-ws 1) n))
-      ((and (is-str n) (is-str prev))
-       (values (gen-nl-ws (* 4 depth)) n))
-      ((and (or (is-word-group n) (is-c-fdef n) (is-jsarr n)) ;(is-punctuation-group (car rest))
-            (or (match-punc-ls "," prev)
-                (is-word-group prev)))
-       (values (gen-ws 1) n))
-      ((match-punc-ls "=" n)
-       (values (gen-ws 1) n (gen-ws 1)))
-      ((and (is-punctuation-group n) (CHAR= (car n) #\*))
-       (values (gen-ws 1) n))
-      ((and t)
-       (values n))
+        )
       )
-    )
-  )
-
-(defun c-ast-fmt-simtupid (out ast)
-  (let* ((ret nil)
-         (idx-bool (js-idx-type-to-test :funcs)))
-    (setf ret (copy-ast ast
-                        #'(lambda (n)
-                            (not (is-blank-group n)))))
-    (setf ret (xform-ast ret
-                         #'identity
-                         #'c-simtupid-fmt-cb
-                         '()))
     ret
     )
   )
 
-(defun test-js-fmt ()
-  (let* ((in (str-to-char-ls
-              "function foo (a b c) { function bar (x y z) { hello.world(); } bar();}"))
-         (ast (js-to-ast in)))
-    (js-ast-fmt-simtupid nil ast)
+(defun fmt-break-lines (ast max-line-len breakable-after)
+  (let ((brk-tbl '())
+        (new-ast '())
+        (extra-indent 0))
+    (setf brk-tbl (build-break-table ast max-line-len
+                                     #'(lambda (x stack)
+                                         (let ((ret nil))
+                                           (do-group (b breakable-after)
+                                             (cond
+                                               ((funcall (car b) x stack)
+                                                (setf ret t)
+                                                (setf extra-indent (cadr b))
+                                                (return)
+                                                )
+                                               )
+                                             )
+                                           ret
+                                           )
+                                         )))
+    ;(puts "brk-tbl: ~a" brk-tbl)
+    (if (not (have-breakable-overflowing-lines brk-tbl max-line-len))
+        (return-from fmt-break-lines ast)
+        )
+    (do-group (ln brk-tbl)
+      (cond
+        ((and (> (nthcadr 1 ln) max-line-len)
+              (> (nthcadr 2 ln) 0))
+         (auto-walk-tree ast (nthcadr 5 ln)
+                         :mutate-node #'(lambda (y)
+                                          (list 'break (nthcadr 4 ln) y)
+                                          ))
+         )
+        )
+      )
+    (setf new-ast (xform-ast ast #'identity
+               #'(lambda (p n r stk)
+                   (cond
+                     ((and (listp n) (equal (car n) 'break))
+                      (values (caddr n) (gen-nl-ws (+ (cadr n)
+                                                      (- extra-indent 1))))
+                      )
+                     ((and t)
+                      (values n)
+                      )
+                     )
+                   )
+               (list ast)))
+    (fmt-break-lines new-ast max-line-len breakable-after)
     )
   )
 
-(defun test-js-fmt-2 ()
-  (let* ((in (str-to-char-ls
-              "function foo (a b {d:function c (a b c) { stuff }}) { function bar (x y z) { hello.world(); } bar();}"))
-         (ast (js-to-ast in)))
-    (js-ast-fmt t ast :simtupid)
+(defun replace-subseq (sub rep ls)
+  (let ((ret '())
+        (dead 0)
+        (sub-len (length sub))
+        )
+    (do-cons (e ls)
+      (cond
+        ((and (= dead 0) (equal (head-n e sub-len) sub))
+         (setf dead (- sub-len 1))
+         (setf ret (append ret rep))
+         )
+        ((= dead 0)
+         (pushr! ret (car e))
+         )
+        ((> dead 0)
+         (decf dead)
+         )
+        )
+      )
+    ret
     )
   )
 
-(defun js-ast-fmt (out ast style)
-  (if (equal out t)
-      (setf out *standard-output*))
-  (cond
-    ((equal style :simtupid)
-     (js-ast-fmt-simtupid nil ast))
-    ((equal style :simple)
-     (js-ast-fmt-simple nil ast))
-    ((and t)
-     (assert nil))
-    ))
+(defun fmt-tabify (ast tabify)
+  (assert (numberp tabify))
+  (xform-ast ast #'identity
+             #'(lambda (p n r s)
+                 (cond
+                   ((is-white-space-group n)
+                    (values (replace-subseq (car (gen-ws tabify)) '(#\Tab) n))
+                    )
+                   ((and t)
+                    (values n)
+                    )
+                   )
+                 )
+             (list ast))
+  )
 
-(defun c-ast-fmt (out ast style)
-  (if (equal out t)
-      (setf out *standard-output*))
-  (cond
-    ((equal style :simtupid)
-     (c-ast-fmt-simtupid nil ast))
-    ((and t)
-     (assert nil))
-    ))
+(defun fmt-rules (ast &key fold max-line-len indent-chars indent
+                          breakable-after break-indent spacing
+                          special-breaks tabify)
+  (let ((ret '())
+        )
+
+    ;;; strip out all blanks
+    (setf ret (copy-ast ast
+                        #'(lambda (n)
+                            (not (is-blank-group n)))))
+
+    ;(puts "copy-ast:~% ~A" ret)
+    ;;; spacing
+    (setf ret (xform-ast ret #'identity
+                         #'(lambda (p n r stk)
+                             (let ((ret '()))
+                               (do-group (s spacing)
+                                 (cond
+                                   ((funcall (car s) n (car r) stk)
+                                    (setf ret (cadr s))
+                                    (return)
+                                    )
+                                   )
+                                 )
+                               (if (not ret)
+                                   (values n)
+                                   (values n ret))
+                               )
+                             )
+                         (list ret)))
+    ;(puts "spacing:~% ~A" ret)
+    ;;; folding
+    (setf ret (xform-ast ret #'identity
+                         #'(lambda (p n r stk)
+                             (let ((ret '()))
+                               (do-group (f fold)
+                                 (cond
+                                   ((funcall (car f) n stk)
+                                    (setf ret (funcall (cadr f) n))
+                                    (return)
+                                    )
+                                   ((and t)
+                                    )
+                                   )
+                                 )
+                               (if (not ret)
+                                   (values n)
+                                   (values ret))
+                               )
+                             )
+                         (list ret)))
+    ;(puts "folding:~% ~A" ret)
+    ;;; indents
+
+    (setf ret (xform-ast ret #'identity
+                         #'(lambda (p n r stk)
+                             (let ((ret '())
+                                   (fn nil))
+                               ;(puts "N: ~A ~A" n (car r))
+                               (do-group (x indent)
+                                 (cond
+                                   ((funcall x n (car r) stk)
+                                    (setf ret t)
+                                    (setf fn x)
+                                    (return)
+                                    )
+                                   )
+                                 )
+                               (if (not ret)
+                                   (values n)
+                                   (funcall fn n (car r) stk))
+                               )
+                             )
+                         (list ret)))
+
+    ;(puts "indents:~% ~A" ret)
+    ;;; breaks
+    (setf ret (fmt-break-lines ret max-line-len breakable-after))
+    ;;; special-breaks
+
+    ;;; tabification
+    (if (and tabify)
+        (setf ret (fmt-tabify ret tabify))
+        )
+    ret
+    )
+  )
+
+(defmacro! with-indent-width (var num &body body)
+  `(let ((,var ,num))
+     ,@body
+     )
+  )
+
+(defmacro! fmt-rules-with-indent-width (var num &body body)
+  `(with-indent-width ,var ,num
+     (fmt-rules ,@body))
+  )
+
+(defmacro! js-joyent-style-base (ast &key spaces indent (max-line-len 80)
+                                     tabify)
+  `(fmt-rules-with-indent-width
+    spaces ,spaces ,ast
+             :fold (list
+                    (list
+                     #'(lambda (n stack)
+                         (and (is-js-fdef-binding n)
+                              (member-if #'(lambda (x)
+                                             (or (is-js-fdef x)
+                                                 (is-js-fdef-binding x)))
+                                         stack)
+                              )
+                         )
+                     #'(lambda (n)
+                         (append (str-to-char-ls "<<< ")
+                                 (get-js-fbind-name n)
+                                 (str-to-char-ls "=/ >>>"))
+                         )
+                     )
+                    (list
+                     #'(lambda (n stack)
+                         (and (is-js-fdef n)
+                              (member-if #'(lambda (x)
+                                             (or (is-js-fdef x)
+                                                 (is-js-fdef-binding x)))
+                                         stack)
+                              (not (is-js-fdef-binding (car (last stack))))
+                              )
+                         )
+                     #'(lambda (n)
+                         (append (str-to-char-ls "<<< ")
+                                 (get-js-fdef-name n)
+                                 (str-to-char-ls "{}/ >>>"))
+                         )
+                     )
+                    )
+             :max-line-len ,max-line-len
+             :indent (list
+                            #'(lambda (x y stack)
+                                (cond
+                                  ((and (equal #\{ x) (not (equal  #\} y)))
+                                   (let ((depth (count-if #'is-curly-group
+                                                          stack)))
+                                     (values x (gen-nl-ws (* depth spaces)))
+                                     )
+                                   )
+                                  ((and t)
+                                   nil
+                                   )
+                                  )
+                                )
+                            #'(lambda (x y stack)
+                                (cond
+                                  ((and (not (equal #\{ x))
+                                        (equal #\} y))
+                                   (let ((depth (count-if #'is-curly-group
+                                                          stack)))
+                                     (values x (gen-nl-ws (* (- depth 1) spaces)))
+                                     )
+                                   )
+                                  ((and t)
+                                   nil)
+                                  )
+                                )
+
+                            #'(lambda (x y stack)
+                                (cond
+                                  ((and (or (is-js-any-ctl-stmt x) (is-curly-group x))
+                                        (match-str-list "else" y)
+                                        )
+                                   (let ((depth (count-if #'is-curly-group
+                                                          stack)))
+                                     (values x (gen-ws 1))
+                                     )
+                                   )
+                                  ((and t)
+                                   nil)
+                                  )
+                                )
+                            #'(lambda (x y stack)
+                                (cond
+                                  ((and (is-js-any-ctl-stmt x)
+                                        (not (match-str-list "else" y))
+                                        (not (is-semi y)))
+                                   (let ((depth (count-if #'is-curly-group
+                                                          stack)))
+                                     (values x (gen-nl-ws (* depth spaces)))
+                                     )
+                                   )
+                                  ((and t)
+                                   nil)
+                                  )
+                                )
+                            #'(lambda (x y stack)
+                                (cond
+                                  ((and y
+                                        (is-curly-group x)
+                                        (not (match-str-list "else" y))
+                                        (not (is-semi y))
+                                        (not (is-paren-group (car (last stack)))))
+                                   (let ((depth (count-if #'is-curly-group
+                                                          stack)))
+                                     (values x (gen-nl-ws (* depth spaces)))
+                                     )
+                                   )
+                                  ((and t)
+                                   nil)
+                                  )
+                                )
+                            #'(lambda (x y stack)
+                                (cond
+                                  ((and (match-str-list ";" x)
+                                        (not (is-paren-group
+                                              (car (last stack)))))
+                                   (let ((depth (count-if #'is-curly-group
+                                                          stack)))
+                                     (values x (gen-nl-ws (* depth spaces)))
+                                     )
+                                   )
+                                  ((and t)
+                                   nil)
+                                  )
+                                )
+                            #'(lambda (x y stack)
+                                (cond
+                                  ((and (is-comma x) ;(is-word-group y)
+                                    (and
+                                     (is-curly-group (car (last stack)))
+                                     (not (is-js-fdef (cadr (reverse stack))))
+                                     ))
+                                   (let ((depth (count-if #'is-curly-group
+                                                          stack)))
+                                     (values x (gen-nl-ws (* depth spaces)))
+                                     )
+                                   )
+                                  ((and t)
+                                   nil)
+                                  )
+                                )
+                            ,@indent
+                           )
+             :breakable-after (list
+                               (list #'(lambda (x stack)
+                                         (and (equal #\( x)
+                                              (not (is-str (car (last stack)))))
+                                         ) 4)
+                               (list #'(lambda (x stack)
+                                         (and (match-any-puncs-ls
+                                               '("|" "||" "&" "&&" "^"
+                                                 "," "+" ":" "?" "-"
+                                                 "*" "/" "%" ;">" "<"
+                                                 "=" "("
+                                                 ;">=" "<=" "=" "=="
+                                                 ;"!=" "!==" "==="
+                                                ) x)
+                                              (not (is-str (car (last stack))))
+                                              )) 4)
+                                    )
+             :break-indent '(gte-prev lte-next)
+             :spacing (list (list
+                             #'(lambda (x y stack)
+                                 (and (is-comma x)
+                                      (or (is-word-group y)
+                                          (is-js-fcall y)
+                                          (is-js-mbr-chain y)
+                                          (is-paren-group y)
+                                          (is-js-fdef y))
+                                      (not (is-curly-group (car (last stack)))))
+                                 )
+                             (gen-ws 1))
+                            (list
+                             #'(lambda (y x stack)
+                                 (and (or (is-js-any-ctl-stmt x)
+                                          (is-curly-group x))
+                                      (match-str-list "else" y))
+                                 )
+                             (gen-ws 1))
+                            (list
+                             #'(lambda (x y stack)
+                                 (and (is-comma x) (is-str y))
+                                 )
+                             (gen-ws 1))
+                            (list
+                             #'(lambda (x y stack)
+                                 (and (is-semi x)
+                                      (is-paren-group (car (last stack))))
+                                 )
+                             (gen-ws 1))
+                            (list
+                             #'(lambda (x y stack)
+                                 (and (or (is-word-group x)
+                                          (is-js-mbr-chain x)
+                                          (is-str x)
+                                          (is-js-fcall x)
+                                          (is-js-arr x)
+                                          (is-bracket-group x)
+                                          )
+                                      (and (not (is-comma y))
+                                           (not (is-dot y))
+                                           (not (or (is-semi y)))
+                                           (is-punctuation-group y))
+                                      )
+                                 )
+                             (gen-ws 1))
+                            (list
+                             #'(lambda (x y stack)
+                                 (and (and (is-punctuation-group x)
+                                          )
+                                      (and ;(not (is-comma y))
+                                           ;(not (is-dot y))
+                                           ;(not (or (is-semi y)))
+                                           (is-curly-group y))
+                                      )
+                                 )
+                             (gen-ws 1))
+                            (list
+                             #'(lambda (y x stack)
+                                 (and (or (is-word-group x)
+                                          (is-js-mbr-chain x)
+                                          (is-str x)
+                                          (is-js-fcall x)
+                                          (is-js-fdef x)
+                                          (is-js-arr x)
+                                          (is-bracket-group x))
+                                      (and (not (is-comma y))
+                                           (not (is-dot y))
+                                           (not (or (is-semi y)))
+                                           (is-punctuation-group y)
+                                           (not (match-str-list "!" y)))
+                                      )
+                                 )
+                             (gen-ws 1))
+                            (list
+                             #'(lambda (x y stack)
+                                 (and (is-word-group x)
+                                      (or (is-word-group y)
+                                          (is-js-binding y)
+                                          (is-js-fcall y)
+                                          (is-js-mbr-chain y))
+                                      )
+                                 )
+                             (gen-ws 1))
+                            (list
+                             #'(lambda (x y stack)
+                                 (and (is-punctuation-group x)
+                                      (is-punctuation-group y)
+                                      )
+                                 )
+                             (gen-ws 1))
+                            (list
+                             #'(lambda (x y stack)
+                                 (and (is-word-group x)
+                                      (or (is-js-ctl-struct-name x)
+                                          (match-str-list "function" x))
+                                      (is-paren-group y))
+                                 )
+                             (gen-ws 1))
+                            (list
+                             #'(lambda (x y stack)
+                                 (and (is-paren-group x)
+                                      (or (is-curly-group y)
+                                          (is-word-group y)
+                                          (is-js-fcall y)
+                                          )
+                                      )
+                                 )
+                             (gen-ws 1))
+                            )
+             :special-breaks (list
+                              #'(lambda (x y stack)
+                                  (is-str x)
+                                  )
+                              #'fmt-xform-string)
+             :tabify ,tabify
+             )
+  )
+
+(defun js-joyent-style (ast)
+  (js-joyent-style-base ast :spaces 4)
+  )
+
+(defun js-dap-like-style (ast)
+  (js-joyent-style-base ast :spaces 8 :tabify 8
+                            :indent (
+                                     #'(lambda (x y stack)
+                                         (cond
+                                           ((and (is-curly-group y))
+                                            (let ((depth (count-if #'is-curly-group
+                                                                   stack)))
+                                              (if (= depth 0)
+                                                  (values x (gen-nl-ws (* 0 spaces))
+                                                          )
+                                                  (values x))
+                                              )
+                                            )
+                                           ((and t)
+                                            nil
+                                            )
+                                           )
+                                         )
+                                     )
+                            )
+  )
+
+(defun c-joyent-style (ast)
+  (fmt-rules ast
+             :fold (list
+                    (list
+                     #'(lambda (n stack)
+                         (and (is-c-fdef n)
+                              (member-if #'(lambda (x)
+                                             (is-c-fdef x))
+                                         stack)
+                              )
+                         )
+                     #'(lambda (n)
+                         (append (str-to-char-ls "<<< ")
+                                 (get-js-fdef-name n)
+                                 (str-to-char-ls "{}/ >>>"))
+                         )
+                     )
+                    )
+             :max-line-len 80
+             :indent (list
+                            #'(lambda (x y stack)
+                                (cond
+                                  ((and (equal #\{ x) (not (equal  #\} y)))
+                                   (let ((depth (count-if #'is-curly-group
+                                                          stack)))
+                                     (values x (gen-nl-ws (* depth 8)))
+                                     )
+                                   )
+                                  ((and t)
+                                   nil
+                                   )
+                                  )
+                                )
+                            #'(lambda (x y stack)
+                                (cond
+                                  ((and (not (equal #\{ x))
+                                        (equal #\} y))
+                                   (let ((depth (count-if #'is-curly-group
+                                                          stack)))
+                                     (values x (gen-nl-ws (* (- depth 1) 8)))
+                                     )
+                                   )
+                                  ((and t)
+                                   nil)
+                                  )
+                                )
+                            #'(lambda (x y stack)
+                                (cond
+                                  ((and y
+                                        (is-curly-group x)
+                                        (not (match-str-list "else" y))
+                                        (not (is-semi y))
+                                        (not (is-paren-group (car (last stack)))))
+                                   (let ((depth (count-if #'is-curly-group
+                                                          stack)))
+                                     (values x (gen-nl-ws (* depth 8)))
+                                     )
+                                   )
+                                  ((and t)
+                                   nil)
+                                  )
+                                )
+                            #'(lambda (x y stack)
+                                (cond
+                                  ((and (match-str-list ";" x)
+                                        (not (is-paren-group
+                                              (car (last stack)))))
+                                   (let ((depth (count-if #'is-curly-group
+                                                          stack)))
+                                     (values x (gen-nl-ws (* depth 8)))
+                                     )
+                                   )
+                                  ((and t)
+                                   nil)
+                                  )
+                                )
+                            #'(lambda (x y stack)
+                                (cond
+                                  ((and (is-comma x)
+                                    (and
+                                     (is-curly-group (car (last stack)))
+                                     (not (is-c-fdef (cadr (reverse stack))))
+                                     ))
+                                   (let ((depth (count-if #'is-curly-group
+                                                          stack)))
+                                     (values x (gen-nl-ws (* depth 8)))
+                                     )
+                                   )
+                                  ((and t)
+                                   nil)
+                                  )
+                                )
+                           )
+             :breakable-after (list
+                               (list #'(lambda (x stack)
+                                         (and (equal #\( x)
+                                              (not (is-str (car (last stack)))))
+                                         ) 4)
+                               (list #'(lambda (x stack)
+                                         (and (match-any-puncs-ls '("|" "||" "&" "&&" "^"
+                                                                    "," "+" ":" "?" "-"
+                                                                    "*" "/" "%" ;">" "<"
+                                                                    "="
+                                                                    ;">=" "<=" "=" "=="
+                                                                    ;"!=" "!==" "==="
+                                                                    ) x)
+                                              (not (is-str (car (last stack))))
+                                              )
+                                         )
+                                     4)
+                               )
+             :break-indent '(gte-prev lte-next)
+             :spacing (list (list
+                             #'(lambda (x y stack)
+                                 (and (is-comma x)
+                                      (or (is-word-group y)
+                                          (is-c-fcall y)
+                                          ;(is-js-mbr-chain y)
+                                          (is-paren-group y))
+                                      (not (is-curly-group (car (last stack)))))
+                                 )
+                             (gen-ws 1))
+                            (list
+                             #'(lambda (y x stack)
+                                 (and (or ;(is-js-any-ctl-stmt x)
+                                          (is-curly-group x))
+                                      (match-str-list "else" y))
+                                 )
+                             (gen-ws 1))
+                            (list
+                             #'(lambda (x y stack)
+                                 (and (is-comma x) (is-str y))
+                                 )
+                             (gen-ws 1))
+                            (list
+                             #'(lambda (x y stack)
+                                 (and (is-semi x)
+                                      (is-paren-group (car (last stack))))
+                                 )
+                             (gen-ws 1))
+                            (list
+                             #'(lambda (x y stack)
+                                 (and (or (is-word-group x)
+                                          ;(is-js-mbr-chain x)
+                                          (is-str x)
+                                          (is-c-fcall x)
+                                          ;(is-js-arr x)
+                                          (is-bracket-group x)
+                                          )
+                                      (and (not (is-comma y))
+                                           (not (is-dot y))
+                                           (not (or (is-semi y)))
+                                           (is-punctuation-group y))
+                                      )
+                                 )
+                             (gen-ws 1))
+                            (list
+                             #'(lambda (x y stack)
+                                 (and (and (is-punctuation-group x)
+                                          )
+                                      (and ;(not (is-comma y))
+                                           ;(not (is-dot y))
+                                           ;(not (or (is-semi y)))
+                                           (is-curly-group y))
+                                      )
+                                 )
+                             (gen-ws 1))
+                            (list
+                             #'(lambda (y x stack)
+                                 (and (or (is-word-group x)
+                                          ;(is-js-mbr-chain x)
+                                          (is-str x)
+                                          (is-c-fcall x)
+                                          (is-bracket-group x))
+                                      (and (not (is-comma y))
+                                           (not (is-dot y))
+                                           (not (or (is-semi y)))
+                                           (is-punctuation-group y)
+                                           (not (match-str-list "!" y)))
+                                      )
+                                 )
+                             (gen-ws 1))
+                            (list
+                             #'(lambda (x y stack)
+                                 (and (is-word-group x)
+                                      (or (is-word-group y)
+                                          ;(is-js-binding y)
+                                          (is-c-fcall y)
+                                          ;(is-js-mbr-chain y)
+                                          )
+                                      )
+                                 )
+                             (gen-ws 1))
+                            (list
+                             #'(lambda (x y stack)
+                                 (and (is-punctuation-group x)
+                                      (is-punctuation-group y)
+                                      )
+                                 )
+                             (gen-ws 1))
+                            (list
+                             #'(lambda (x y stack)
+                                 (and (is-word-group x)
+                                      (or (is-ctl-struct-name x)
+                                          (match-str-list "function" x))
+                                      (is-paren-group y))
+                                 )
+                             (gen-ws 1))
+                            (list
+                             #'(lambda (x y stack)
+                                 (and (is-paren-group x)
+                                      (or (is-curly-group y)
+                                          (is-word-group y)
+                                          (is-c-fcall y)
+                                          )
+                                      )
+                                 )
+                             (gen-ws 1))
+                            )
+             :special-breaks (list
+                              #'(lambda (x y stack)
+                                  (is-str x)
+                                  )
+                              #'fmt-xform-string)
+             :tabify 8
+             )
+  )
 
 (defun gen-chars (&rest cs)
   (let* ((res '()))
@@ -5068,6 +5877,51 @@
             #'js-flat-ctl-stmts
             #'js-if-else-chains
             ))
+
+
+(defun ws-has-newline (e)
+  (and e (is-white-space-group e) (member #\Newline e)))
+
+(defun lines (ls)
+  (let ((ret '())
+        (acc '())
+        )
+    (do-group (e ls)
+      (cond
+        ((and (is-white-space-group e) (member #\Newline e))
+         (pushr! acc e)
+         (pushr! ret acc)
+         (setf acc '())
+         )
+        ((and t)
+         (pushr! acc e)
+         )
+        )
+      )
+    (if (and acc)
+        (pushr! ret acc))
+    ret
+    )
+  )
+
+(vdefun eu-csv-to-ast (input)
+  (pipeline input #'cmt-str #'white-space #'words #'punctuations
+            #'lines)
+  )
+
+(defun grep (ast cmp)
+  (let ((new '())
+        )
+    (do-group (l ast)
+      (cond
+        ((funcall cmp l)
+         (pushr! new l)
+         )
+        )
+      )
+    new
+    )
+  )
 
 (defun cl-to-ast (input)
   (pipeline input #'cl-cmt-str #'white-space
