@@ -239,10 +239,12 @@
 
 (defun pushenv (e)
   (pushr! env-stack e)
+  nil
   )
 
 (defun popenv ()
   (popr! env-stack)
+  nil
   )
 
 (defun get-env-var (var)
@@ -485,7 +487,7 @@
 (defun index-get-path-walk-impl (index path ast &optional pov)
   (get-path-walk path index ast pov))
 
-(defun index-get-subtrees-str (path &optional pov &key page force alt-idx-type)
+(defun index-get-subtrees-str (path &optional pov &key page force alt-idx-type unfold)
   (pre-filter-files path
     (let ((pf nil)
           (ast-str nil)
@@ -496,7 +498,7 @@
                            (load-ast repo f cmt)
                            pov)))
         (do-group (tree trees)
-          (setf ast-str (ast-to-str (funcall ast-fmt tree)))
+          (setf ast-str (ast-to-str (funcall ast-fmt tree :unfold unfold)))
           (if (and (not (equal f pf)) (not (equal ast-str "")))
               (puts "~d:~%" f))
           (setf pf f)

@@ -166,7 +166,9 @@
   (pipeline 1 #'mysleep #'mysleep #'mysleep))
 
 (defun string-to-symbol (s &optional case-sensitive)
-  (intern (if case-sensitive s (string-upcase s))))
+  (if (and s)
+      (intern (if case-sensitive s (string-upcase s)))
+      nil))
 
 (defun symbol-to-string (s &optional upcase)
   (if (and upcase)
@@ -176,7 +178,9 @@
   )
 
 (defun string-to-keyword (s)
-  (intern (string-upcase s) "KEYWORD"))
+  (if (and s)
+      (intern (string-upcase s) "KEYWORD")
+      nil))
 
 (defun symbol-to-keyword (s)
   (string-to-keyword (symbol-to-string s)))
@@ -370,7 +374,7 @@
 (defvar blip-github-users (blip-file (str-cat blip-repos-index "github-users")))
 (defvar blip-fmt-out t)
 (defvar blip-err-out *error-output*)
-(defvar blip-pre-loaded-env nil)
+(defvar blip-pre-loaded-envs nil)
 
 
 (defun set-blip-fmt-out (s)
@@ -381,9 +385,14 @@
   (setf blip-err-out s)
   )
 
-(defun pre-load-env (env)
-  (setf blip-pre-loaded-env env)
+(defun pre-load-envs (&rest envs)
+  (setf blip-pre-loaded-envs envs)
   nil
+  )
+
+(defun pre-load-env (&rest envs)
+  "For backwards compatibility"
+  (apply #'pre-load-envs envs)
   )
 
 (defmacro! puts (fmtstr &rest vars)
@@ -460,65 +469,12 @@
 (defmacro! thrice (&body body)
   `(progn ,@body ,@body ,@body))
 
-(defmacro! in-index-path-cli (&body body)
-  `(let* ((noun nouns)
-          (path nil)
-          (pov nil)
-          (force nil)
-          (page nil)
-          (alt-idx-type nil))
-     (setf path (car noun))
-     (setf noun (cdr noun))
-     (setf pov (str-to-pov (car noun)))
-     (if pov (setf noun (cdr noun)))
-     (thrice
-       (cond
-         ((string= (car noun) "--page")
-          (setf page (cadr noun))
-          (setf noun (cddr noun))
-          )
-         ((string= (car noun) "--force")
-          (setf force t)
-          (setf noun (cdr noun))
-          )
-         ((string= (car noun) "--type")
-          (setf alt-idx-type (string-to-keyword (cadr noun)))
-          (setf noun (cdr noun))
-          )
-         ))
-     ,@body
-     ))
-
-(defmacro! in-index-nopath-cli (&body body)
-  `(let* ((noun nouns)
-          (pov nil)
-          (force nil)
-          (page nil)
-          (alt-idx-type nil))
-     (setf pov (str-to-pov (car noun)))
-     (if pov (setf noun (cdr noun)))
-     (thrice
-       (cond
-         ((string= (car noun) "--page")
-          (setf page (cadr noun))
-          (setf noun (cddr noun))
-          )
-         ((string= (car noun) "--force")
-          (setf force t)
-          (setf noun (cdr noun))
-          )
-         ((string= (car noun) "--type")
-          (setf alt-idx-type (string-to-keyword (cadr noun)))
-          (setf noun (cdr noun))
-          )
-         ))
-     ,@body
-     ))
-
 (defun load-top-env ()
   (cond
-    ((and blip-pre-loaded-env)
-     (pushenv blip-pre-loaded-env)
+    ((and blip-pre-loaded-envs)
+     (do-group (e blip-pre-loaded-envs)
+       (pushenv e)
+       )
      )
     ((and t)
      (pushenv (load-env (car (last (file-to-form blip-env-stack)))))
@@ -801,10 +757,10 @@
     (def-cli-verb "pushenv"
       :args ("env-name")
       :body (
-             (let ((env nil))
-               (if (have-env env-name)
+             (let ((env (string-to-symbol env-name)))
+               (if (have-env env)
                    (form-to-file (pushr (file-to-form blip-env-stack)
-                                        env-name)
+                                        env)
                                  blip-env-stack)
                    )
                )
@@ -919,13 +875,13 @@
     (def-cli-verb "index-get-subtrees-str"
       :args ("path")
       :opt-args ("pov")
-      :flags ("force")
+      :flags ("force" "unfold")
       :params ("page" "type")
       :body (
              (load-top-env)
              (index-get-subtrees-str path (string-to-keyword pov)
                                      :page page :force force
-                                     :alt-idx-type type)
+                                     :alt-idx-type type :unfold unfold)
              )
       )
     (def-cli-verb "ast-ls-files"
@@ -988,6 +944,17 @@
                                 (get-env-var 'commit)))))
              )
      )
+    (def-cli-verb "ast-stringify"
+      :args ("file")
+      :body (
+             (load-top-env)
+             (puts "~a"
+                   (stringify-ast-leaves
+                      (load-ast (get-env-var 'repo)
+                                file
+                                (get-env-var 'commit))))
+             )
+      )
     (def-cli-verb "what-requires"
       :args ("file")
       :flags ("force")
@@ -1121,6 +1088,20 @@
                  )
              )
      )
+    (def-cli-verb "perf-ls"
+      :body (nil)
+        )
+    (def-cli-verb "perf-find"
+      :params ("verb")
+      )
+    (def-cli-verb "perf-stack-time"
+      :args ("timestamp")
+      :flags ("latest")
+      )
+    (def-cli-verb "perf-func-time"
+      :args ("timestamp")
+      :flags ("latest")
+      )
     (def-cli-verb "sleep"
       :args ("seconds")
       :body ((sleep (parse-integer seconds)))
@@ -1579,6 +1560,20 @@
 (defun char-ls-to-str (cls)
   "Convert character list to string"
   (coerce cls 'string))
+
+(defun is-char-ls (cls)
+  (if (not (listp cls))
+      (return-from is-char-ls nil)
+      )
+  (do-group (c cls)
+    (cond
+      ((not (characterp c))
+       (return-from is-char-ls nil)
+       )
+      )
+    )
+  t
+  )
 
 ;;; White-space grouping and related boolean tests.
 
@@ -3308,6 +3303,12 @@
                 ))
 
 (defun js-var-bindingp (head tail)
+  (let ((ret nil))
+    (setf ret (js-fdef-bindingp head tail))
+    (if (and ret)
+        (return-from js-var-bindingp ret)
+        )
+    )
   (finite-match (cons head tail)
                 (list
                  (list :m #'is-js-word-or-arr)
@@ -3316,7 +3317,8 @@
                  (list :o #'is-blank-group)
                  (list :mc #'is-stmt)
                  )
-                ))
+                )
+  )
 
 (defun js-mbr-chainp (head tail)
   (finite-repeating-match (cons head tail)
@@ -4581,6 +4583,45 @@
                    '() '())
     (map 'list #'(lambda (e) (str-split "/" e)) args)))
 
+(defun get-js-fdef-arg-list (def)
+  "Returns a list of identifies (aka words) that represent func args."
+  (let ((args (get-js-fdef-params def))
+        (wds '())
+        )
+    (do-group (w args)
+      (if (is-word-group w)
+          (pushr! wds w)
+          )
+      )
+    wds
+    )
+  )
+
+(defun get-js-fdef-arg (def n)
+  (nthcadr n (get-js-fdef-arg-list def))
+  )
+
+(defun get-js-fcall-arg (call n)
+  (let* ((params (get-fcall-params call))
+         (count 0)
+         (pls (list-split '(#\,) (remove-if #'is-blank-group
+                                            (popl (popr params)))))
+         (cursor 0)
+         )
+    (do-group (p params)
+      (if (match-punc-ls "," p)
+          (incf count)
+          )
+      )
+    (cond
+      ((and (> count 0) (> count n))
+       ;;; TODO Remember we have to ignore parens, commas, and white-space
+       (nthcadr n pls)
+       )
+      )
+    )
+  )
+
 (defun pathname-to-string (p)
   "Note that the 'flatten' is in there because some bindings, (such as binding
    to an array) contain lists at the toplevel instead of characters"
@@ -4876,9 +4917,7 @@
 (defun mapahead (func ls)
   (mapahead-aux '() func ls nil))
 
-(defun xform-ast (ast test xform stack &key on-test-fail)
-  (if (not on-test-fail)
-      (setf on-test-fail 'drop))
+(defun xform-ast (ast xform stack)
   (if (not (listp ast))
       (return-from xform-ast ast))
   (let* ((ret nil))
@@ -4887,27 +4926,19 @@
                   (reduce #'append
                           (mapahead
                                #'(lambda (prev n rest)
-                                   (cond
-                                     ((or (and test (funcall test n)) (not test))
                                        (multiple-value-list
                                         (funcall xform prev n rest stack)))
-                                     ((and test (not (funcall test n))
-                                           (equal on-test-fail 'keep))
-                                      (multiple-value-list n)
-                                      )
-                                     )
-                                   )
                                ast))))
     (setf ret (map 'list
                    #'(lambda (n)
-                       (xform-ast n test xform (pushr stack n)))
+                       (xform-ast n xform (pushr stack n)))
                    ret))
     ret
     )
   )
 
 (defun copy-ast (ast test)
-  (xform-ast ast test #'(lambda (p n r s) n) '()))
+  (xform-ast ast #'(lambda (p n r s) (if (funcall test n) n)) (list ast)))
 
 (defun gen-ws-aux (acc n)
   (cond
@@ -5148,7 +5179,7 @@
          )
         )
       )
-    (setf new-ast (xform-ast ast #'identity
+    (setf new-ast (xform-ast ast
                #'(lambda (p n r stk)
                    (cond
                      ((and (listp n) (equal (car n) 'break))
@@ -5190,7 +5221,7 @@
 
 (defun fmt-tabify (ast tabify)
   (assert (numberp tabify))
-  (xform-ast ast #'identity
+  (xform-ast ast
              #'(lambda (p n r s)
                  (cond
                    ((is-white-space-group n)
@@ -5204,7 +5235,7 @@
              (list ast))
   )
 
-(defun fmt-rules (ast &key fold max-line-len indent-chars indent
+(defun fmt-rules (ast &key fold unfold max-line-len indent-chars indent
                           breakable-after break-indent spacing
                           special-breaks tabify)
   (let ((ret '())
@@ -5217,7 +5248,7 @@
 
     ;(puts "copy-ast:~% ~A" ret)
     ;;; spacing
-    (setf ret (xform-ast ret #'identity
+    (setf ret (xform-ast ret
                          #'(lambda (p n r stk)
                              (let ((ret '()))
                                (do-group (s spacing)
@@ -5236,29 +5267,31 @@
                          (list ret)))
     ;(puts "spacing:~% ~A" ret)
     ;;; folding
-    (setf ret (xform-ast ret #'identity
-                         #'(lambda (p n r stk)
-                             (let ((ret '()))
-                               (do-group (f fold)
-                                 (cond
-                                   ((funcall (car f) n stk)
-                                    (setf ret (funcall (cadr f) n))
-                                    (return)
-                                    )
-                                   ((and t)
-                                    )
+    (setf ret (if (not unfold)
+                  (xform-ast ret
+                             #'(lambda (p n r stk)
+                                 (let ((ret '()))
+                                   (do-group (f fold)
+                                     (cond
+                                       ((funcall (car f) n stk)
+                                        (setf ret (funcall (cadr f) n))
+                                        (return)
+                                        )
+                                       ((and t)
+                                        )
+                                       )
+                                     )
+                                   (if (not ret)
+                                       (values n)
+                                       (values ret))
                                    )
                                  )
-                               (if (not ret)
-                                   (values n)
-                                   (values ret))
-                               )
-                             )
-                         (list ret)))
+                             (list ret))
+                  ret))
     ;(puts "folding:~% ~A" ret)
     ;;; indents
 
-    (setf ret (xform-ast ret #'identity
+    (setf ret (xform-ast ret
                          #'(lambda (p n r stk)
                              (let ((ret '())
                                    (fn nil))
@@ -5304,9 +5337,10 @@
   )
 
 (defmacro! js-joyent-style-base (ast &key spaces indent (max-line-len 80)
-                                     tabify)
+                                     tabify unfold)
   `(fmt-rules-with-indent-width
     spaces ,spaces ,ast
+             :unfold ,unfold
              :fold (list
                     (list
                      #'(lambda (n stack)
@@ -5581,12 +5615,13 @@
              )
   )
 
-(defun js-joyent-style (ast)
-  (js-joyent-style-base ast :spaces 4)
+(defun js-joyent-style (ast &key unfold)
+  (js-joyent-style-base ast :spaces 4 :unfold unfold)
   )
 
-(defun js-dap-like-style (ast)
+(defun js-dap-like-style (ast &key unfold)
   (js-joyent-style-base ast :spaces 8 :tabify 8
+                            :unfold unfold
                             :indent (
                                      #'(lambda (x y stack)
                                          (cond
@@ -5875,7 +5910,7 @@
             #'js-curly-ctl-stmts
             #'js-do-while-stmts
             #'js-flat-ctl-stmts
-            #'js-if-else-chains
+            ;#'js-if-else-chains
             ))
 
 
@@ -7041,6 +7076,22 @@
 
 (vdefun load-ast-sha2 (repo file commit &optional indexer)
   (bin-to-form (ast-sha2-path repo file commit indexer)))
+
+(vdefun stringify-ast-leaves (ast)
+  "Turns every flat group of characters into a string"
+  (xform-ast ast
+             #'(lambda (p n r s)
+                 (cond
+                   ((and (is-char-ls n))
+                    (values (char-ls-to-str n))
+                    )
+                   ((and t)
+                    (values n)
+                    )
+                   )
+                 )
+             (list ast))
+  )
 
 (defun js-path-cat-aux (str ls files)
   (let* ((dstr (str-cat str (car ls) "/"))
