@@ -31,6 +31,13 @@
   "Shorthand for lol:defmacro"
   `(lol:defmacro! ,@body))
 
+(defmacro! symb (&body args)
+  "Shorthand for lol:symb"
+  `(lol:symb ,@args))
+
+(defmacro! mkstr (&body args)
+  `(lol:mkstr ,@args)
+  )
 
 (defun repeat (x n)
   (let ((ls '())
@@ -185,6 +192,10 @@
 (defun symbol-to-keyword (s)
   (string-to-keyword (symbol-to-string s)))
 
+(defun keyword-to-string (k &optional upcase)
+  (symbol-to-string k  upcase)
+  )
+
 (defun str-cat-2 (s1 s2)
   "Concatenates 2 strings"
   (concatenate 'string s1 s2))
@@ -269,9 +280,16 @@
       (str-has "\\+" v)
       ))
 
-(defun str-split (regex str)
+(defun str-split (regex str &key unlistify)
   "Splits the string at each place that the given pcre regex is matched"
-  (cl-ppcre:split regex str))
+  (let ((res (cl-ppcre:split regex str))
+        )
+    (if (and unlistify (= 1 (length res)))
+        (setf res str)
+        )
+    res
+    )
+  )
 
 (defun str-matches (regex str)
   "returns nil if there is not match in str, t otherwise"
@@ -297,6 +315,13 @@
 
 (defun str-replace (regex targ str)
   (cl-ppcre:regex-replace-all regex str targ))
+
+(defun is-char-ls-prefix (pref ls)
+  (let ((str (char-ls-to-str (head-n ls (length pref))))
+        )
+    (is-str-prefix pref str)
+    )
+  )
 
 (defun cwd ()
   "Returns the current working directory"
@@ -342,15 +367,17 @@
   (pushr! blip-files file)
   file)
 
+
 ;;; All of these dirs get created at compile-time. This file must be in the
 ;;; `blip-self-repo` dir (see below).
-(defvar blip-root (blip-dir "/depot/synthesis/blip/"))
+(mkdir blip-root)
 (defvar blip-stor (blip-dir (str-cat blip-root "stor/")))
 (defvar blip-tickets (blip-dir (str-cat blip-stor "tickets/")))
 (defvar blip-meta (blip-dir (str-cat blip-root "meta/")))
 (defvar blip-tmp (blip-dir (str-cat blip-meta "tmp/")))
 (defvar blip-du (blip-dir (str-cat blip-meta "disk-usage/")))
 (defvar blip-bin (blip-dir (str-cat blip-meta "bin/")))
+(mkdir (str-cat blip-bin "/" blip-platform "/"))
 (defvar blip-env (blip-dir (str-cat blip-meta "env/")))
 (defvar blip-in-xform nil)
 (defvar blip-xform-args nil)
@@ -358,7 +385,7 @@
 (defvar blip-env-stack (blip-file (str-cat blip-env "stack")))
 (defvar blip-env-avail (blip-file (str-cat blip-env "avail")))
 (defvar blip-env-sha (blip-file (str-cat blip-env "sha")))
-(defvar blip-core (str-cat blip-bin "blip"))
+(defvar blip-core (str-cat blip-bin "/" blip-platform "/blip"))
 (defvar blip-logs (blip-dir (str-cat blip-meta "logs/")))
 (defvar blip-repos (blip-dir (str-cat blip-stor "repos/")))
 (defvar blip-asts (blip-dir (str-cat blip-stor "repo-asts/")))
@@ -596,7 +623,7 @@
        (sb-ext:exit :code -1)
        )
       )
-    n
+    (str-split "," n :unlistify t)
     )
   )
 
@@ -607,7 +634,7 @@
        nil
        )
       ((and t)
-       n
+       (str-split "," n :unlistify t)
        )
       )
     )
@@ -634,7 +661,7 @@
               (equal name (subseq n 2 (length n))))
          (cond
            ((not (is-flag-or-param n+1))
-            (return-from get-param-arg (cadr ns))
+            (return-from get-param-arg (str-split "," (cadr ns) :unlistify t))
             )
            ((is-flag-or-param n+1)
             (e-puts "Expect an argument for param ~a" n)
@@ -655,6 +682,10 @@
    come right after args. flags are any strings that start with '--' and don't
    an argument. params are any strings that start with '--' and do take an
    argument. body is just a block of code that will be executed.
+
+   All arguments, optional-arguments, and params will be checked for the
+   presence of a comma (,). If there is at least 1 comma, the argument is
+   interpreted as a list. Nested lists are not possible.
 
    This macro also builds up the list that will be used to print the
    help-output. You can't define a help verb -- that gets defined implicitly.
@@ -735,15 +766,90 @@
      )
   )
 
+
+(defun quotify-list (ls)
+  (if (listp ls) (list 'quote ls) ls)
+  )
+
+(defmacro! def-cli-verb-env (verb)
+  `(def-cli-verb ,verb
+     :args ("name" "repo" "commit")
+     :flags ("verbose" "set")
+     :params ("pref" "antipref" "depth" "req" "style")
+     :body (
+            (let ((envs (file-to-forms blip-env-cfg))
+                  (entry '())
+                  )
+              (setf commit (string-downcase commit))
+              (setf name (string-to-symbol name))
+              (cond
+                ((or set (not (member-if #'(lambda (n) (equalp name n))
+                                         envs :key #'cadr)))
+                 (pushr! entry (string-to-symbol verb))
+                 (pushr! entry name repo)
+                 (pushr! entry (if (equal commit "head") '(quote head) commit))
+                 (if (and verbose)
+                     (pushr! entry :verbose verbose)
+                     )
+                 (if (and pref)
+                     (pushr! entry :pref (quotify-list pref))
+                     )
+                 (if (and antipref)
+                     (pushr! entry :antipref (quotify-list antipref))
+                     )
+                 (if (and depth)
+                     (pushr! entry :depth depth)
+                     )
+                 (if (and req)
+                     (pushr! entry :req req)
+                     )
+                 (if (and style)
+                     ;(puts "style ~a" style)
+                     (pushr! entry :style (string-to-symbol style))
+                     )
+                 (puts "entry ~a" entry)
+                 (if (and set)
+                     (setf envs (remove-if #'(lambda (n) (equal name n))
+                                           envs :key #'cadr))
+                     )
+                 (pushr! envs entry)
+                 (forms-to-file envs blip-env-cfg)
+                 ;;; TODO write the file, but test this out first
+                 )
+                ((and t)
+                 (e-puts "Env with name ~d already exists." name)
+                 )
+                )
+              )
+            ;;; We want to modify env-cfg.lisp and add a new entry if it does
+            ;;; not exist.
+            )
+    )
+  )
+
+(defun hash-to-list (ht &key cmp key)
+  (let ((ret '()))
+    (maphash #'(lambda (k v) (pushr! ret (list k v))) ht)
+    (if (and cmp)
+        (setf ret (sort ret cmp))
+        )
+    )
+  )
+
 (defun main-impl (argv)
   (def-cli (cadr argv) (cddr argv)
     (def-cli-verb "env-ls"
-      :body ((cond
-               ((not (blip-env-cfg-currentp))
-                (quiet-load blip-env-cfg)
-                )
+      :body ((let ((envs (file-to-forms blip-env-cfg))
+                   (names '())
+                   )
+               (do-group (e envs)
+                 (pushr! names (symbol-to-string (cadr e)))
+                 )
+               (setf names (sort names #'string<))
+               (do-group (n names)
+                 (puts "~a" n)
+                 )
                )
-             (puts "~A" (file-to-form blip-env-avail))
              )
       )
     (def-cli-verb "env-stack"
@@ -1063,6 +1169,12 @@
                 ))
              )
       )
+    (def-cli-verb "github-blacklist"
+      :args ("repo-name")
+      :params ("user")
+      :body (
+             )
+      )
     (def-cli-verb "pull-env"
       :body (
              (load-top-env)
@@ -1089,19 +1201,83 @@
              )
      )
     (def-cli-verb "perf-ls"
-      :body (nil)
+      :body (
+             (walk-directory blip-logs
+                            #'(lambda (nm)
+                                (puts "~a" (pathname-name nm))
+                                )
+                            )
+             )
         )
     (def-cli-verb "perf-find"
       :params ("verb")
       )
     (def-cli-verb "perf-stack-time"
-      :args ("timestamp")
-      :flags ("latest")
+      :opt-args ("timestamp")
+      ;;; Note that we ignore the "true" latest one because that one is the
+      ;;; log for this very run of perf-stack-stack.
+      :flags ("latest" "fg-compat")
+      :body ((perf-x-time vdefun-stack-time)
+             )
       )
     (def-cli-verb "perf-func-time"
-      :args ("timestamp")
-      :flags ("latest")
+      :opt-args ("timestamp")
+      ;;; Note that we ignore the "true" latest one because that one is the
+      ;;; log for this very run of perf-stack-stack.
+      :flags ("latest" "fg-compat")
+      :body ((perf-x-time vdefun-func-time)
+             )
       )
+    (def-cli-verb-env "js-env")
+    (def-cli-verb-env "c-env")
+    (def-cli-verb "env-show"
+      :args ("name")
+      :body ((let* ((envs (file-to-forms blip-env-cfg))
+                    (env (find (string-to-symbol name) envs :key #'cadr))
+                    (cmd '())
+                    )
+               (do-group (elem env)
+                 (cond
+                   ((keywordp elem)
+                    (pushr! cmd (str-cat "--" (keyword-to-string elem)))
+                    )
+                   ((symbolp elem)
+                    (pushr! cmd (symbol-to-string elem))
+                    )
+                   ((stringp elem)
+                    (pushr! cmd elem)
+                    )
+                   ((and (consp elem) (equal (car elem) 'quote)
+                         (symbolp (cadr elem)))
+                    (pushr! cmd (symbol-to-string (cadr elem)))
+                    )
+                   ((and (consp elem) (equal (car elem) 'quote)
+                         (listp (cadr elem)))
+                    (pushr! cmd (apply #'str-cat (intersperse (cadr elem) "," t)))
+                    )
+                   ((listp elem)
+                    (pushr! cmd (apply #'str-cat (intersperse elem "," t)))
+                    )
+                   )
+                 )
+               (prin1 env)
+               (format blip-fmt-out "~%")
+               (puts "~a" (apply #'str-cat (intersperse cmd " " t)))
+               )
+             )
+        )
+    (def-cli-verb "env-rm"
+      :args ("name")
+      :body (
+             (setf name (string-to-symbol name))
+             (let ((envs (file-to-forms blip-env-cfg)))
+               (setf envs
+                     (remove-if #'(lambda (n) (equal n name))
+                                envs :key #'cadr))
+               (forms-to-file envs blip-env-cfg)
+               )
+             )
+        )
     (def-cli-verb "sleep"
       :args ("seconds")
       :body ((sleep (parse-integer seconds)))
@@ -1113,6 +1289,7 @@
   "The main entry point for this program."
   (init-vdefun-stream)
   (let* ((argv sb-ext:*posix-argv*))
+    (stack-pushr blip-vdefun-log (list 'args argv))
     (main-impl argv)
     (cond
       ((and blip-vdefun-stream)
@@ -1296,6 +1473,76 @@
     )
   )
 
+(defun fmt-perf-stacks (pairs delim &key (placement 'after))
+  (mapcar #'(lambda (p)
+              (let ((stack (car p))
+                    (str "")
+                    )
+                (cond
+                  ((listp stack)
+                   (do-group (s stack)
+                     (cond
+                       ((equal placement 'before)
+                        (setf str (str-cat str delim (symbol-to-string s)))
+                        )
+                       ((equal placement 'after)
+                        (setf str (str-cat str (symbol-to-string s) delim))
+                        )
+                       ((and t)
+                        (assert nil)
+                        )
+                       )
+                     )
+                   (list str (cadr p))
+                   )
+                  ((and t)
+                   (setf str (symbol-to-string stack))
+                   (list str (cadr p))
+                   )
+                  )
+                )
+              )
+          pairs)
+  )
+
+(defmacro! perf-x-time (func-name)
+  `(let ((fnm1 nil)
+         (fnm2 nil)
+         (fmt-stacks '())
+         )
+     (cond
+       ((and (not timestamp) (not latest))
+        (e-puts "Expected either a timestamp or '--latest'")
+        (sb-ext:exit :code 0)
+        )
+       ((and latest)
+        (walk-directory blip-logs
+                        #'(lambda (nm)
+                            (setf fnm1 fnm2)
+                            (setf fnm2 (pathname-name nm))
+                            )
+                        )
+        (if (and fnm1)
+            (setf timestamp (parse-integer fnm1)))
+        )
+       ((and timestamp)
+        (setf timestamp (parse-integer timestamp))
+        )
+       )
+     (if (not fg-compat)
+         (puts "timestamp: ~a" timestamp))
+     (setf fmt-stacks (fmt-perf-stacks (,func-name timestamp) ";"
+                                       :placement 'after))
+     (puts "hi ~a" fmt-stacks)
+     (do-group (s fmt-stacks)
+       (puts "~a ~a" (car s) (cadr s))
+       )
+
+     (if (not fg-compat)
+         (puts "timestamp: ~a" timestamp))
+     )
+  )
+
 (defun vdefun-stack-time (time)
   (let ((log (load-vdefun-log time))
         (dict (make-hash-table :test #'equal))
@@ -1350,6 +1597,19 @@
   (raw-args (method-args args))
   )
 
+(defun replace-head-elem (elem with list)
+  (cond
+    ((and (listp list) (equal elem (car list)))
+     (setf (car list) with)
+     (replace-head-elem elem with (cdr list))
+     )
+    ((and (listp list) (listp (car list)))
+     (replace-head-elem elem with (car list))
+     )
+    )
+  list
+  )
+
 ;;; The v-variants of defun and defmethod are intended to provide visibility
 ;;; into the performance of functions and methods that we define. This follows
 ;;; the convention set by joyent with the creation of vasync, verror, vstream,
@@ -1357,27 +1617,27 @@
 ;;; and flush it out when we're done. But we should also have the option for
 ;;; dtrace probes in the future.
 (defmacro! vdefun (name args &body body)
-  ;;; TODO make raw-args not filter symbols that begin with & but are not
-  ;;; special (i.e. we can name "real" args using &.
-  (cond
-    ((and blip-vdefun-enabled)
-     `(defun ,name ,args
-        (labels ((local-fn ,(raw-args `,args) ,@body))
-          (let ((ret nil))
-            (stack-pushr blip-vdefun-log (list 'e 'f ',name (get-internal-real-time)))
-            (setf ret (multiple-value-list (local-fn ,@(raw-args `,args))))
-            (stack-pushr blip-vdefun-log (list 'r 'f ',name (get-internal-real-time)))
-            (if (>= (stack-length blip-vdefun-log) blip-vdefun-log-max)
-                (flush-vdefun-log)
-                )
-            (values-list ret)
+  (let ((local-fn (gensym)))
+    (cond
+      ((and blip-vdefun-enabled)
+       `(defun ,name ,args
+          (labels ((,local-fn ,(raw-args `,args) ,@body))
+            (let ((ret nil))
+              (stack-pushr blip-vdefun-log (list 'e 'f ',name (get-internal-real-time)))
+              (setf ret (multiple-value-list (,local-fn ,@(raw-args `,args))))
+              (stack-pushr blip-vdefun-log (list 'r 'f ',name (get-internal-real-time)))
+              (if (>= (stack-length blip-vdefun-log) blip-vdefun-log-max)
+                  (flush-vdefun-log)
+                  )
+              (values-list ret)
+              )
             )
           )
-        )
-     )
-    ((not blip-vdefun-enabled)
-     `(defun ,name ,args ,@body)
-     )
+       )
+      ((not blip-vdefun-enabled)
+       `(defun ,name ,args ,@body)
+       )
+      )
     )
   )
 
@@ -1448,6 +1708,16 @@
     )
   )
 
+(defun parse-float (str)
+  (let ((ret nil))
+    (with-input-from-string (in str)
+      (setf ret (read in))
+      )
+    (assert (floatp ret))
+    ret
+    )
+  )
+
 (defun head-n (list n)
   "Get the first n elems of a list"
   (iter:iter
@@ -1495,6 +1765,16 @@
   "Same as popr but overwrite the list"
   `(setf ,ls (popr ,ls)))
 
+
+(defun poprl (ls)
+  (popl (popr ls))
+  )
+
+(defun poplr (ls)
+  (popr (popl ls))
+  )
+
+
 (defmacro! do-group (args &body body)
   "Just like dolist, except it allows arbitrary look-ahead"
   (assert (>= (length args) 2))
@@ -1511,6 +1791,74 @@
          )
        )
     )
+  )
+
+(defmacro! try-each (&rest conds)
+  "Conds is a list of lists. Each first elem is a test-body, and the remaining
+  elems are the code to evaluate if test-body is true (just like the
+  cond-macro). The difference from the cond-macro is that we keep going down the
+  list of conds until our return value becomes non-nil (whereas cond stops at
+  the first successful test, regardless of return value). Also, we have an
+  implicit nil-return if everything returns nil or no branches are taken."
+  (let ((body '())
+        (if-inner'())
+        (if-outer '())
+        (ret (gensym))
+        )
+    (do-group (c conds)
+      (pushr! if-inner 'if (car c) (append '(progn) (cdr c)) 'nil)
+      (pushr! if-outer 'if (list 'setf ret if-inner) (list 'return ret))
+      (pushr! body if-outer)
+      (setf if-inner '())
+      (setf if-outer '())
+      )
+    `(block nil
+       (let ((,ret nil))
+         ,@body
+         nil
+         )
+       )
+    )
+  )
+
+
+(defmacro! xor (&rest exprs)
+  (let ((body '())
+        (and-body '())
+        (pos 0)
+        )
+    (pushr! body 'or)
+    (dotimes (i (length exprs))
+      (pushr! and-body 'and)
+      (do-group (e exprs)
+        (cond
+          ((= i pos)
+           (pushr! and-body e)
+           )
+          ((not (= i pos))
+           (pushr! and-body (list 'not e))
+           )
+          )
+        (incf pos)
+        )
+      (pushr! body and-body)
+      (setf and-body '())
+      (setf pos 0)
+      )
+    body
+    )
+  )
+
+(defmacro! nand (&rest exprs)
+  `(or (xor ,@exprs) (not (and ,@exprs)))
+  )
+
+(defmacro! nor (&rest exprs)
+  `(and (not (xor ,@exprs)) (not (and ,@exprs)))
+  )
+
+(defmacro! xnor (&rest exprs)
+  `(not (xor ,@exprs))
   )
 
 
@@ -1974,6 +2322,10 @@
 (defmacro! is-bcmt-end ()
   `(and (CHAR= head #\*) (CHAR= (car tail) #\/)))
 
+(defmacro! is-html-bcmt-end ()
+  `(is-char-ls-prefix "-->" (cons head tail))
+  )
+
 (defmacro! is-lcmt-end ()
   `(CHAR= head #\Newline))
 
@@ -2195,6 +2547,47 @@
   (stack-list stack)
   )
 
+
+(defun html-cmt-str-aux (stack head tail)
+  (tagbody
+   again
+     (cond
+       ((and (not head) (not tail))
+        )
+       ((and head (not tail))
+        (stack-pushr stack head))
+       ((is-char-ls-prefix "<!--" (cons head tail))
+        (let ((bcls '()))
+          (tagbody
+           bcmtagain
+             (cond
+               ((and (not (is-html-bcmt-end)) (not tail))
+                (pushr! bcls head)
+                (advance-scanner))
+               ((and (is-html-bcmt-end))
+                (pushr! bcls #\* #\/)
+                (advance-scanner 2))
+               ((not (is-html-bcmt-end))
+                (pushr! bcls head)
+                (advance-scanner)
+                (go bcmtagain))
+               )
+             (stack-pushr stack bcls)
+             (go again)
+             )
+        ))
+       ((CHAR= head #\")
+        (str-tagbody #\" dqagain)
+        )
+       ((and t)
+        (stack-pushr stack head)
+        (advance-scanner)
+        (go again)
+        )
+       )
+     )
+  (stack-list stack)
+  )
 (vdefun cmt-str (char-ls)
   (cmt-str-aux (make-instance 'stack) (car char-ls) (cdr char-ls)))
 
@@ -2203,6 +2596,9 @@
 
 (vdefun cl-cmt-str (char-ls)
   (cl-cmt-str-aux (make-instance 'stack) (car char-ls) (cdr char-ls)))
+
+(vdefun html-cmt-str (char-ls)
+  (html-cmt-str-aux (make-instance 'stack) (car char-ls) (cdr char-ls)))
 
 ; When called this returns a list containing all chars from /* to */ and a new
 ; tail.
@@ -2936,99 +3332,6 @@
 
 
 
-(defun js-curly-ctl-stmtp (head tail)
-  (finite-match (cons head tail)
-                (list
-                 (list :m #'(lambda (x) (or (match-str-list "if" x)
-                                            (match-str-list "while" x)
-                                            (match-str-list "for" x)
-                                            (match-str-list "switch" x))))
-                 (list :o #'is-blank-group)
-                 (list :m #'is-paren-group)
-                 (list :o #'is-blank-group)
-                 (list :m #'is-curly-group))))
-
-(defun js-flat-ctl-stmtp (head tail)
-  (finite-match (cons head tail)
-                (list
-                 (list :m #'(lambda (x) (or (match-str-list "if" x)
-                                            (match-str-list "while" x)
-                                            (match-str-list "for" x)
-                                            (match-str-list "switch" x))))
-                 (list :o #'is-blank-group)
-                 (list :m #'is-paren-group)
-                 (list :o #'is-blank-group)
-                 (list :mc #'is-stmt))))
-
-(defun js-do-while-stmtp (head tail)
-  (finite-match (cons head tail)
-                (list
-                 (list :m #'(lambda (x) (match-str-list "do" x)))
-                 (list :o #'is-blank-group)
-                 (list :m #'is-curly-group)
-                 (list :o #'is-blank-group)
-                 (list :m #'(lambda (x) (match-str-list "while" x)))
-                 (list :o #'is-blank-group)
-                 (list :m #'is-paren-group)
-                 (list :o #'is-blank-group)
-                 )))
-
-(defun js-fdefp (head tail)
-  (finite-match (cons head tail)
-                (list
-                 (list :m #'(lambda (x) (match-str-list "function" x)))
-                 (list :o #'is-blank-group)
-                 (list :o #'is-js-func-name)
-                 (list :o #'is-blank-group)
-                 (list :m #'is-paren-group)
-                 (list :o #'is-blank-group)
-                 (list :m #'is-c-fdef-end)
-                 )
-                )
-  )
-
-(defun c-fdefp (head tail)
-  (finite-match (cons head tail)
-                (list
-                 (list :m #'is-c-func-name)
-                 (list :o #'is-blank-group)
-                 (list :m #'is-paren-group)
-                 (list :o #'is-blank-group)
-                 (list :m #'is-c-fdef-end)
-                 )
-                )
-  )
-
-(defun js-fcallp (head tail)
-  (finite-match (cons head tail)
-                (list
-                 (list :m #'is-js-func-name)
-                 (list :o #'is-blank-group)
-                 (list :m #'is-paren-group)
-                 )
-                )
-  )
-
-(defun c-fcallp (head tail)
-  (finite-match (cons head tail)
-                (list
-                 (list :m #'is-c-func-name)
-                 (list :o #'is-blank-group)
-                 (list :m #'is-paren-group)
-                 )
-                )
-  )
-
-(defun js-arrp (head tail)
-  (finite-match (cons head tail)
-                (list
-                 (list :m #'is-js-func-name)
-                 (list :o #'is-blank-group)
-                 (list :m #'is-bracket-group)
-                 )
-                )
-  )
-
 (defmacro! defgrouper (name body)
   `(defun ,name (head tail size)
      (list (map
@@ -3039,25 +3342,6 @@
            (popl-n tail size)
            ))
   )
-
-(defgrouper group-js-fdef
-    (if (is-nestable x) (js-fdefs x) x))
-
-(defgrouper group-c-fdef
-    (if (is-nestable x) (c-fdefs x) x))
-
-(defgrouper group-js-fcall
-    (if (is-nestable x) (js-fcalls x) x))
-
-(defgrouper group-c-fcall
-    (if (is-nestable x) (c-fcalls x) x))
-
-(defgrouper group-js-arr
-    (if (is-nestable x) (js-arrs x) x))
-
-(defgrouper group-js-do-while-stmt
-    (if (is-nestable x) (js-do-while-stmts x) x))
-
 
 (defun first-pgroup-pos-aux (head tail count)
   (cond
@@ -3098,36 +3382,36 @@
   `(let ((nacc (pushr acc (,grand-parent head))))
     (,parent nacc (car tail) (cdr tail))))
 
-
-(defmacro! stage-when (test body)
-  `(function (lambda (q)
-    (if ,test
-        ,body
-        nil)))
-  )
-
 (defmacro! c-stage-impl (self-parent self matcher grouper &key fcall fdef
-                                         curly-ctl do-while flat-ctl arr nestable
-                                         var-bind mbr-chain)
+                                     curly-ctl do-while
+                                     flat-ctl arr nestable var-bind mbr-chain)
   `(progn
      (defun ,self (acc head tail)
        (let ((sz (,matcher head tail)))
-         (pipeline-until nil
-                         (stage-when (and sz)
-                                                (group-and-continue ,self ,grouper sz))
-                         (stage-when (is-c-fcall head) ,fcall)
- ;;;(stage-when (is-c-arr head) ,arr)
-                         (stage-when (is-c-fdef head) ,fdef)
- ;;;(stage-when (is-c-var-binding head) ,var-bind)
- ;;;(stage-when (is-c-curly-ctl-stmt head) ,curly-ctl)
- ;;;(stage-when (is-c-do-while-stmt head) ,do-while)
- ;;;(stage-when (is-c-flat-ctl-stmt head) ,flat-ctl)
- ;;;(stage-when (is-c-mbr-chain head) ,mbr-chain)
-                         (stage-when (is-nestable head) ,nestable)
-                         (stage-when (or (and (characterp head) tail) tail)
-                                                (,self (pushr acc head) (car tail) (cdr tail)))
-                         (stage-when (and head (not tail)) (pushr acc head))
-                         (stage-when (and (not tail)) acc))
+         (try-each
+           ((and sz)
+            (group-and-continue ,self ,grouper sz))
+           ((is-c-fcall head)
+            ,fcall)
+ ;;;((is-c-arr head) ,arr)
+           ((is-c-fdef head)
+            ,fdef)
+ ;;;((is-c-var-binding head) ,var-bind)
+ ;;;((is-c-curly-ctl-stmt head) ,curly-ctl)
+ ;;;((is-c-do-while-stmt head) ,do-while)
+ ;;;((is-c-flat-ctl-stmt head) ,flat-ctl)
+ ;;;((is-c-mbr-chain head) ,mbr-chain)
+           ((is-nestable head)
+            ,nestable)
+           ((or (and (characterp head) tail) tail)
+            (,self (pushr acc head) (car tail) (cdr tail)))
+           ((and head (not tail))
+            (pushr acc head))
+           ((and (not tail))
+            acc)
+           ((and t)
+            nil)
+           )
          )
        )
      (vdefun ,self-parent (ls)
@@ -3136,30 +3420,89 @@
      )
   )
 
-(defmacro! js-stage-impl (self-parent self matcher grouper &key fcall fdef fdef-bind
-                                         curly-ctl do-while flat-ctl arr nestable
-                                         var-bind obj-lit-rec mbr-chain)
+
+
+(defmacro! js-stage-impl (self-parent self matcher grouper &key fcall fdef
+                                         fdef-bind curly-ctl do-while flat-ctl
+                                         arr nestable var-bind obj-lit-rec
+                                         mbr-chain)
   `(progn
      (defun ,self (acc head tail)
        (let ((sz (,matcher head tail)))
-         (pipeline-until nil
-                         (stage-when (and sz)
-                                                (group-and-continue ,self ,grouper sz))
-                         (stage-when (is-js-fcall head) ,fcall)
-                         (stage-when (is-js-arr head) ,arr)
-                         (stage-when (is-js-fdef head) ,fdef)
-                         (stage-when (is-js-fdef-binding head) ,fdef-bind)
-                         (stage-when (is-js-var-binding head) ,var-bind)
-                         (stage-when (is-js-curly-ctl-stmt head) ,curly-ctl)
-                         (stage-when (is-js-do-while-stmt head) ,do-while)
-                         (stage-when (is-js-flat-ctl-stmt head) ,flat-ctl)
-                         (stage-when (is-js-mbr-chain head) ,mbr-chain)
-                         (stage-when (is-js-obj-lit-rec head) ,obj-lit-rec)
-                         (stage-when (is-nestable head) ,nestable)
-                         (stage-when (or (and (characterp head) tail) tail)
-                                                (,self (pushr acc head) (car tail) (cdr tail)))
-                         (stage-when (and head (not tail)) (pushr acc head))
-                         (stage-when (and (not tail)) acc))
+         (try-each
+           ((and sz)
+            (group-and-continue ,self ,grouper sz))
+           ((is-js-fcall head)
+            ,fcall)
+           ((is-js-arr head)
+            ,arr)
+           ((is-js-fdef head)
+            ,fdef)
+           ((is-js-fdef-binding head)
+            ,fdef-bind)
+           ((is-js-var-binding head)
+            ,var-bind)
+           ((is-js-curly-ctl-stmt head)
+            ,curly-ctl)
+           ((is-js-do-while-stmt head)
+            ,do-while)
+           ((is-js-flat-ctl-stmt head)
+            ,flat-ctl)
+           ((is-js-mbr-chain head)
+            ,mbr-chain)
+           ((is-js-obj-lit-rec head)
+            ,obj-lit-rec)
+           ((is-nestable head)
+            ,nestable)
+           ((or (and (characterp head) tail) tail)
+            (,self (pushr acc head) (car tail) (cdr tail)))
+           ((and head (not tail))
+            (pushr acc head))
+           ((and (not tail))
+            acc)
+           ((and t)
+            nil)
+           )
+         )
+       )
+     (vdefun ,self-parent (ls)
+       (,self '() (car ls) (cdr ls))
+       )
+     )
+  )
+
+(defmacro! html-stage-impl (self-parent self matcher grouper &key link bold emph
+                                        paragraph blockquote linebreak)
+  `(progn
+     (defun ,self (acc head tail)
+       (let ((sz (,matcher head tail)))
+         (try-each
+          ((and sz)
+           (group-and-continue ,self ,grouper sz))
+          ((is-html-paragraph head)
+           ,paragraph
+           )
+          ((is-html-link head)
+           ,link
+           )
+          ((is-html-bold head)
+           ,bold
+           )
+          ((is-html-emph head)
+           ,emph
+           )
+          ((is-html-blockquote head)
+           ,blockquote
+           )
+          ((or (and (characterp head) tail) tail)
+           (,self (pushr acc head) (car tail) (cdr tail)))
+          ((and head (not tail))
+           (pushr acc head))
+          ((and (not tail))
+           acc)
+          ((and t)
+           nil)
+          )
          )
        )
      (vdefun ,self-parent (ls)
@@ -3182,16 +3525,185 @@
      )
   )
 
-(defmacro! defstage (l stagename &rest kvps)
+;;; TODO make this work with dynamic start and end tests.
+;;; For example, in XML we only know at run-time what the corresponding end-test
+;;; is to each start-test.
+(defmacro! defnestable (l stagename &key start-test end-test when descend-if)
+  "
+  This defines a nestable grouper. It takes a language `l` (i.e. js, c, go) as a
+  string. It takes a `stagename` (i.e. parenthesis, curlies, etc) also as a
+  string. And it takes as keys two function _bodies_ that operate on a single
+  variable named `x`.
+
+  The `when` argument is analogous to defstage's `when` argument. However the
+  only valid action `descend`.
+  "
+  (let* ((pref (string-to-symbol (str-cat `,l "-" `,stagename "s")))
+         (aux (string-to-symbol (str-cat `,l "-" `,stagename "s-aux")))
+         (startp (gensym))
+         (endp (gensym))
+         (descp (gensym))
+         (startdef (append (list 'defun startp '(x)) (list start-test)))
+         (enddef (append (list 'defun endp '(x)) (list end-test)))
+         (descdef (append (list 'defun descp '(x)) (list descend-if)))
+         )
+    `(progn
+       ,enddef
+       ,startdef
+       ,descdef
+       (defun ,aux (acc head tail)
+         (cond
+           ((and (not head) (not tail))
+            (values acc tail)
+            )
+           ((or (and head (,endp head))
+                (and head (not tail)))
+            (values (pushr acc head) tail)
+            )
+           ((and acc (,startp head))
+            (multiple-value-bind (nacc ntail) (,aux '() head tail)
+              (,aux (pushr acc nacc) (car ntail) (cdr ntail))
+              )
+            )
+           ((,descp head)
+            (multiple-value-bind (nacc ntail) (,aux '() (car head) (cdr head))
+              (,aux (pushr acc nacc) (car ntail) (cdr ntail))
+              )
+            )
+           ((and t)
+            (,aux (pushr acc head) (car tail) (cdr tail))
+            )
+           )
+         )
+       (defun ,pref (ls)
+         (,aux '() (car ls) (cdr ls))
+         )
+       )
+    )
+  )
+
+(defun nestable-match (list start-test end-test)
+  ;;; XXX this will also mistakenly match things like:
+  ;;;     ))))((((
+  ;;; fix it
+  (if (or (not list) (not (funcall start-test (car list))))
+      (return-from nestable-match nil)
+      )
+  (let ((count 0)
+        (started nil)
+        (open 0)
+        )
+    (do-group (n list)
+      (if (funcall start-test n)
+          (progn (incf open) (setf started t)))
+      (if (funcall end-test n)
+          (decf open))
+      (incf count)
+      (if (and (= open 0) started)
+          (return-from nestable-match count)
+          )
+      )
+    (if (and started (> count 0) (= open 0))
+        count
+        nil)
+    )
+  )
+
+(defmacro! defstage (l stagename &key when group-if group-custom test tests-aux
+                       tests-pub)
+  "
+  This defines a parsing stage that will be used in a parsing pipeline.
+
+  The `l` argument is a string that denotes tha language (i.e. js, c, cpp, go).
+
+  The `stagename` argument is a string that denotes the name of the stage (i.e.
+  fdefs, fcalls, conds).
+
+  The following arguments are key-arguments that define how the stage functions.
+
+  `test` takes a body of code that has access to variables `head` and `tail`,
+  and uses this code to match a sequence of elements. If there is a match, the
+  stage will try to group those elems into a list. This function gets defined
+  globally and is usable from any other code in blip.
+
+  `group-if` takes a boolean expression that operates on an implicit argument
+  named `x`. We run this boolean over each element of a group that has just been
+  created by the current stage. When this expression evaluates to true, we try
+  to run the stage on that element, creating a recursion. This can be used, for
+  example, to group nested function definitions.
+
+  `group-custom` is mutually exclusive with `group-if`. It simply takes a
+  function-body that implicitly has access to variables `head`, `tail`, and
+  `size` and returns a list of 3 elems containing: the new grouping, the new
+  head element, and the new tail. This is useful for grouping nodes that have
+  variable length (i.e. flat control structures:
+  `if (foo !== NULL) $arbitrarily-long-stmt`).
+
+  NOTE: if both `group-if` and `group-custom` are nil, we will simply group the
+  matched expression
+
+  `tests-aux` takes a list of function definitions (without the 'defun' keyword)
+  that will be used by the code you pass to `test`. These functions get defined
+  globally, and are usable from any other code in blip.
+
+  `tests-pub` takes a list of function definitions just like `tests-aux`. These
+  functions will be defined after the functions that are defined by `tests-aux`
+  aux and `test`. Typically they are used to specifiy higher level test
+  functions that utilize the test-functions defined by the other two params. For
+  example, you would define is-js-fdef in `tests-pub`, and js-fdefp in `test`.
+  The former is suitable for testing single grouped nodes, while the latter is
+  suitable to testing an ungrouped sequence of nodes.
+
+  `when` takes a list of pairs or tripples, where the first element is a keyword,
+  the second element is an action, and the third element is a refinement of the
+  action. The keyword is language specific and indicates an event or condition
+  (i.e. :fdef, :fcall, :nestable, :mbr-chain -- meaning that we are
+  looking-at/standing-on one of these things). The action can either be `xform`
+  or `descend`. `descend` takes no refinements, and simply tells the stage to
+  start matching/grouping stuff inside the element that it is standing on
+  (instead of moving to the next element). The `xform` action takes a
+  refinement. This refinement is the name of a function that transforms the
+  element/node in a very particular way. For example:
+  `(:fdef xform xform-js-fdef-cgroup)`
+  will tell the stage to only run itself inside the curly braces of of a
+  function definition (and ignore the parenthesis holding the arglist). Note
+  that recursion cannot be achieved with `when`-specs, since they do not test
+  recursively. Instead use `group-if` or `group-custom`.
+
+  For each language, you will have to define a `$lang-stage-impl` macro for the
+  `when` keyword-arg to work. See js-stage-impl and c-stage-impl for an example.
+  "
+  (assert (nand group-if group-custom))
   (let ((stage (string-to-symbol (str-cat `,l "-stage-impl")))
         (pref (string-to-symbol (str-cat `,l "-" `,stagename "s")))
         (aux (string-to-symbol (str-cat `,l "-" `,stagename "s-aux")))
-        (test (string-to-symbol (str-cat `,l "-" `,stagename "p")))
+        (test-nm (string-to-symbol (str-cat `,l "-" `,stagename "p")))
         (group (string-to-symbol (str-cat "group-" `,l "-" `,stagename)))
         (xformer nil)
         (body '())
+        (ret '())
         )
-    (do-group (n kvps)
+    (pushr! ret 'progn)
+    (cond
+      ((and group-if)
+       (pushr! ret (list 'defgrouper group (list 'if group-if
+                                                 (list 'progn
+                                                       (list pref 'x))
+                                                 (list 'progn
+                                                       'x))))
+       )
+      ((and group-custom)
+       (pushr! ret (list 'defun group (list 'head 'tail 'size) group-custom))
+       )
+      ((and t)
+       (pushr! ret (list 'defgrouper group 'x))
+       )
+      )
+    (do-group (n tests-aux)
+      (pushr! ret (append '(defun) n))
+      )
+    (pushr! ret (list 'defun test-nm (list 'head 'tail) test))
+    (do-group (n when)
       (pushr! body (car n))
       (cond
         ((equal 'descend (cadr n))
@@ -3204,68 +3716,201 @@
          )
         )
       )
-    `(,stage ,pref ,aux ,test ,group
-            ,@body)
+    (pushr! ret (append (list stage pref aux test-nm group) body))
+    ret
     )
   )
 
-(defstage "js" "fdef" (:nestable descend))
+(defstage "js" "fdef"
+  :when ((:nestable descend))
+  :group-if (is-nestable x)
+  :test (finite-match (cons head tail)
+                       (list
+                        (list :m #'(lambda (x)
+                                     (match-str-list "function" x)))
+                        (list :o #'is-blank-group)
+                        (list :o #'is-js-func-name)
+                        (list :o #'is-blank-group)
+                        (list :m #'is-paren-group)
+                        (list :o #'is-blank-group)
+                        (list :m #'is-c-fdef-end)
+                        )
+                       ))
 
-(defstage "c" "fdef" (:nestable descend))
+(defstage "c" "fdef"
+  :when ((:nestable descend))
+  :group-if (is-nestable x)
+  :test (finite-match (cons head tail)
+                      (list
+                       (list :m #'is-c-func-name)
+                       (list :o #'is-blank-group)
+                       (list :m #'is-paren-group)
+                       (list :o #'is-blank-group)
+                       (list :m #'is-c-fdef-end)
+                       )
+                      )
+  )
 
-(defstage "js" "fcall" (:fdef xform xform-js-fdef-cgroup) (:nestable descend))
+(defstage "js" "fcall"
+  :when ((:fdef xform xform-js-fdef-cgroup) (:nestable descend))
+  :group-if (is-nestable x)
+  :test (finite-match (cons head tail)
+                       (list
+                        (list :m #'is-js-func-name)
+                        (list :o #'is-blank-group)
+                        (list :m #'is-paren-group)
+                        )
+                      )
+  )
 
-(defstage "c" "fcall" (:fdef xform xform-c-fdef-cgroup) (:nestable descend))
+(defstage "c" "fcall"
+  :when ((:fdef xform xform-c-fdef-cgroup) (:nestable descend))
+  :group-if (is-nestable x)
+  :test (finite-match (cons head tail)
+                      (list
+                       (list :m #'is-c-func-name)
+                       (list :o #'is-blank-group)
+                       (list :m #'is-paren-group)
+                       )
+                      )
+  )
 
 (defstage "js" "arr"
-          (:fdef xform xform-js-fdef-cgroup)
-          (:fcall xform xform-fcall-pgroup)
-          (:nestable descend)
-          )
+  :when ((:fdef xform xform-js-fdef-cgroup)
+         (:fcall xform xform-fcall-pgroup)
+         (:nestable descend))
+  :group-if (is-nestable x)
+  :test (finite-match (cons head tail)
+                      (list
+                       (list :m #'is-js-func-name)
+                       (list :o #'is-blank-group)
+                       (list :m #'is-bracket-group)
+                       )
+                      )
+  )
 
 (defstage "js" "var-binding"
-          (:fdef xform xform-js-fdef-cgroup)
-          (:nestable descend)
+  :when ((:fdef xform xform-js-fdef-cgroup)
+         (:nestable descend))
+  :group-if (is-js-fdef x)
+  :tests-aux ((js-fdef-bindingp (head tail)
+               (finite-match (cons head tail)
+                             (list
+                              (list :m #'is-word-group)
+                              (list :o #'is-blank-group)
+                              (list :m #'is-eq-group)
+                              (list :o #'is-blank-group)
+                              (list :m #'is-js-fdef)
+                              )
+                             )))
+  :test (progn
+          (let ((ret nil))
+            (setf ret (js-fdef-bindingp head tail))
+            (if (and ret)
+                (return-from js-var-bindingp ret)
+                )
+            )
+          (finite-match (cons head tail)
+                        (list
+                         (list :m #'is-js-word-or-arr)
+                         (list :o #'is-blank-group)
+                         (list :m #'is-eq-group)
+                         (list :o #'is-blank-group)
+                         (list :mc #'is-stmt)
+                         )
+                        )
           )
+  )
 
 (defstage "js" "mbr-chain"
-          (:fcall xform xform-fcall-pgroup)
+  :when ((:fcall xform xform-fcall-pgroup)
           (:arr xform xform-js-arr-bgroup)
           (:fdef xform xform-js-fdef-cgroup)
           (:var-bind descend)
           (:fdef-bind descend)
-          (:nestable descend)
+          (:nestable descend))
+  :group-if (or (is-js-fdef-binding x) (is-js-fcall x)
+                (is-js-var-binding x) (is-js-arr x)
+                )
+  :test (finite-repeating-match (cons head tail)
+                                (list
+                                 (list :m #'is-js-word-or-fcall-or-arr)
+                                 (list :o #'is-blank-group)
+                                 (list :m #'is-dot)
+                                 (list :o #'is-blank-group))
+                                (list
+                                 (list :m #'is-word-arr-fcall-vbind-fbind)))
           )
 
 (defstage "js" "obj-lit-rec"
+  :when (
           (:fdef-bind descend)
           (:var-bind descend)
           (:mbr-chain descend)
           (:fdef xform xform-js-fdef-cgroup)
           (:fcall xform xform-fcall-pgroup)
-          (:nestable descend)
+          (:nestable descend))
+  :group-if (or (is-js-fdef-binding x) (is-js-fcall x)
+                (is-js-var-binding x) (is-js-arr x)
+                (is-js-mbr-chain x)
+                )
+  :test (finite-match (cons head tail)
+                      (list
+                       (list :m #'is-js-word-or-str)
+                       (list :o #'is-blank-group)
+                       (list :m #'is-colon-group)
+                       (list :o #'is-blank-group)
+                       (list :mc #'is-obj-lit-rval)
+                       )
+                      )
           )
 
 (defstage "js" "curly-ctl-stmt"
+  :when (
           (:fdef xform xform-js-fdef-cgroup)
           (:fcall xform xform-fcall-pgroup)
           (:mbr-chain descend)
           (:var-bind descend)
           (:obj-lit-rec descend)
-          (:nestable descend)
-          )
+          (:nestable descend))
+  :group-if (is-nestable x)
+  :test (finite-match (cons head tail)
+                      (list
+                       (list :m #'(lambda (x) (or (match-str-list "if" x)
+                                                  (match-str-list "while" x)
+                                                  (match-str-list "for" x)
+                                                  (match-str-list "switch" x))))
+                       (list :o #'is-blank-group)
+                       (list :m #'is-paren-group)
+                       (list :o #'is-blank-group)
+                       (list :m #'is-curly-group)))
+           )
 
 (defstage "js" "do-while-stmt"
+  :when (
           (:fdef xform xform-js-fdef-cgroup)
           (:fcall xform xform-fcall-pgroup)
           (:mbr-chain descend)
           (:var-bind descend)
           (:obj-lit-rec descend)
           (:curly-ctl xform xform-js-curly-ctl-stmt-cgroup)
-          (:nestable descend)
+          (:nestable descend))
+  :group-if (is-nestable x)
+  :test (finite-match (cons head tail)
+                      (list
+                       (list :m #'(lambda (x) (match-str-list "do" x)))
+                       (list :o #'is-blank-group)
+                       (list :m #'is-curly-group)
+                       (list :o #'is-blank-group)
+                       (list :m #'(lambda (x) (match-str-list "while" x)))
+                       (list :o #'is-blank-group)
+                       (list :m #'is-paren-group)
+                       (list :o #'is-blank-group)
+                       ))
           )
 
 (defstage "js" "flat-ctl-stmt"
+  :when (
           (:fdef xform xform-js-fdef-cgroup)
           (:fcall xform xform-fcall-pgroup)
           ;;; Do we need these? vv
@@ -3274,10 +3919,31 @@
           ;;; Do we need these? ^^
           (:obj-lit-rec descend)
           (:curly-ctl xform xform-js-curly-ctl-stmt-cgroup)
-          (:do-while xform xform-js-do-while-cgroup)
+          (:do-while xform xform-js-do-while-cgroup))
+  :group-custom (let* ((ls (head-n (cons head tail) size))
+                       (pos (first-pgroup-pos ls))
+                       (blank-after (is-blank-group (nth (+ pos 1) ls)))
+                       (n-cdr (if (and blank-after) (+ pos 2) (+ pos 1)))
+                       (tail-ls (nthcdr n-cdr ls))
+                       (tail-group (js-flat-ctl-stmts tail-ls))
+                       )
+                  (list (append (head-n ls n-cdr) tail-group)
+                        (car (popl-n tail (- size 1)))
+                        (popl-n tail size)))
+  :test (finite-match (cons head tail)
+                      (list
+                       (list :m #'(lambda (x) (or (match-str-list "if" x)
+                                                  (match-str-list "while" x)
+                                                  (match-str-list "for" x)
+                                                  (match-str-list "switch" x))))
+                       (list :o #'is-blank-group)
+                       (list :m #'is-paren-group)
+                       (list :o #'is-blank-group)
+                       (list :mc #'is-stmt)))
           )
 
 (defstage "js" "if-else-chain"
+  :when (
           (:fdef xform xform-js-fdef-cgroup)
           (:fcall xform xform-fcall-pgroup)
           ;;; Do we need these? vv
@@ -3287,77 +3953,36 @@
           (:obj-lit-rec descend)
           (:curly-ctl xform xform-js-curly-ctl-stmt-cgroup)
           (:flat-ctl xform xform-js-flat-ctl-stmt)
-          (:do-while xform xform-js-do-while-cgroup)
-          )
-
-
-(defun js-fdef-bindingp (head tail)
-  (finite-match (cons head tail)
-                (list
-                 (list :m #'is-word-group)
-                 (list :o #'is-blank-group)
-                 (list :m #'is-eq-group)
-                 (list :o #'is-blank-group)
-                 (list :m #'is-js-fdef)
-                 )
-                ))
-
-(defun js-var-bindingp (head tail)
-  (let ((ret nil))
-    (setf ret (js-fdef-bindingp head tail))
-    (if (and ret)
-        (return-from js-var-bindingp ret)
-        )
-    )
-  (finite-match (cons head tail)
-                (list
-                 (list :m #'is-js-word-or-arr)
-                 (list :o #'is-blank-group)
-                 (list :m #'is-eq-group)
-                 (list :o #'is-blank-group)
-                 (list :mc #'is-stmt)
-                 )
+          (:do-while xform xform-js-do-while-cgroup))
+  :group-if (is-js-fdef x)
+  :tests-aux (
+              (is-if-block (n)
+                (and (listp n) n (match-str-list "if" (car n)))
                 )
+
+              (is-else-word (n)
+                (and (listp n) n (match-str-list "else" n)))
+
+              (is-if-block-or-curly-group-or-stmt (n)
+                (or (is-if-block n)
+                    (is-curly-group n)
+                    )
+                )
+              )
+  :test (finite-repeating-match
+         (cons head tail)
+         (list
+          (list :m #'is-if-block)
+          (list :o #'is-blank)
+          (list :m #'is-else-word)
+          (list :o #'is-blank)
+          )
+         (list
+          (list :m #'is-if-block-or-curly-group-or-stmt)
+          )
+         )
   )
 
-(defun js-mbr-chainp (head tail)
-  (finite-repeating-match (cons head tail)
-       (list
-        (list :m #'is-js-word-or-fcall-or-arr)
-        (list :o #'is-blank-group)
-        (list :m #'is-dot)
-        (list :o #'is-blank-group))
-       (list
-        (list :m #'is-word-arr-fcall-vbind-fbind))))
-
-(defun is-if-block (n)
-  (and (listp n) n (match-str-list "if" (car n)))
-  )
-
-(defun is-else-word (n)
-  (and (listp n) n (match-str-list "else" n)))
-
-(defun is-if-block-or-curly-group-or-stmt (n)
-  (or (is-if-block n)
-      (is-curly-group n)
-      ;;; XXX TODO stmt
-      )
-  )
-
-(defun js-if-else-chainp (head tail)
-  (finite-repeating-match
-   (cons head tail)
-   (list
-    (list :m #'is-if-block)
-    (list :o #'is-blank)
-    (list :m #'is-else-word)
-    (list :o #'is-blank)
-    )
-   (list
-    (list :m #'is-if-block-or-curly-group-or-stmt)
-    )
-   )
-  )
 
 (defun is-js-mbr-chain (ls)
   (and ls (listp ls) (js-mbr-chainp (car ls) (cdr ls))))
@@ -3382,43 +4007,6 @@
     )
   )
 
-;;; Basically anything until '}' or ','
-(defun js-obj-lit-recp (head tail)
-  (finite-match (cons head tail)
-                (list
-                 (list :m #'is-js-word-or-str)
-                 (list :o #'is-blank-group)
-                 (list :m #'is-colon-group)
-                 (list :o #'is-blank-group)
-                 (list :mc #'is-obj-lit-rval)
-                 )
-                )
-  )
-
-
-(defgrouper group-js-curly-ctl-stmt
-    (if (is-nestable x) (js-curly-ctl-stmts x) x))
-
-(defgrouper group-js-var-binding
-    (if (is-js-fdef x) (js-var-bindings x) x))
-
-(defgrouper group-js-mbr-chain
-    (if (or (is-js-fdef-binding x) (is-js-fcall x)
-            (is-js-var-binding x) (is-js-arr x)
-            )
-        (js-mbr-chains x)
-        x))
-
-(defgrouper group-js-obj-lit-rec
-    (if (or (is-js-fdef-binding x) (is-js-fcall x)
-            (is-js-var-binding x) (is-js-arr x)
-            (is-js-mbr-chain x)
-            )
-        (js-obj-lit-recs x)
-        x))
-
-(defgrouper group-js-if-else-chain
-    (if (is-js-fdef x) (js-if-else-chains x) x))
 
 
 (defun js-vars (ast)
@@ -3489,6 +4077,39 @@
   (if (and (listp ls) (cdr ls))
       (walk-tree (cdr ls) test work path
                  (cons 'r walk) :backoff-if backoff-if)))
+
+(defmacro walk-tree2 (ls node-name stack-name walk-name &body body)
+  (let ((ls-name (gensym))
+        (cur-name (gensym))
+        )
+    `(let ((,stack-name '())
+           (,walk-name '())
+           (,ls-name ,ls)
+           (,node-name ,ls)
+           )
+       (cond
+         ((and (listp ,ls-name))
+          (setf ,stack-name (cons ,node-name ,stack-name))
+          ,@body
+          (cond
+            ((and (listp ,ls-name) (car ,ls-name))
+             (setf ,walk-name (cons 'd ,walk-name))
+             (setf ,node-name (car ,ls-name))
+             )
+            ((and (listp ,ls-name) (cdr ,ls-name))
+             (setf ,walk-name (cons 'r ,walk-name))
+             (setf ,node-name (cdr ,ls-name))
+             )
+            ((and t)
+             (setf ,node-name (cdr ,stack-name))
+             ;; TODO GOTO TOP
+             )
+            )
+          )
+         )
+       )
+    )
+  )
 
 ; Walk over the top level of ls and calls func on any fdefs it finds on that
 ; level.
@@ -3860,6 +4481,22 @@
     (close out)
   ))
 
+(defun forms-to-file-impl (forms output)
+  (let ((out nil)
+        (pathls (str-split "/" output)))
+    (if (> (length pathls) 1)
+        (mkdir (apply #'str-cat (intersperse (popr pathls) "/")))
+        )
+    (setf out (open output :direction :output :if-exists :supersede
+                           :if-does-not-exist :create))
+    (do-group (form forms)
+      (prin1 form out)
+      (format out "~%")
+      )
+    (finish-output out)
+    (close out)
+    ))
+
 (defun form-to-bin-impl (form output)
   (let ((out nil)
         (pathls (str-split "/" output)))
@@ -3901,6 +4538,9 @@
 
 (vdefun form-to-file (form output)
   (form-to-file-impl form output))
+
+(vdefun forms-to-file (form output)
+  (forms-to-file-impl form output))
 
 (defun test-cmt-str ()
   (let ((in "abc/* \"xyz\" */||\"abc/* xyz */\"//abc\"a")
@@ -5912,6 +6552,212 @@
             #'js-flat-ctl-stmts
             ;#'js-if-else-chains
             ))
+
+
+(defnestable "test" "paren"
+  :start-test (equal x #\()
+  :end-test (equal x #\))
+  :descend-if (if nil nil nil)
+  )
+
+
+(defnestable "test" "brace"
+  :start-test (equal x #\{)
+  :end-test (equal x #\})
+  :descend-if (and (listp x) (equal (car x) #\())
+  )
+
+(defun is-test2-paren (ls)
+  (and ls (listp ls) (test2-parenp (car ls) (cdr ls))))
+
+(defun is-test2-brace (ls)
+  (and ls (listp ls) (test2-bracep (car ls) (cdr ls))))
+
+(defstage "test2" "paren"
+  :test (nestable-match (cons head tail)
+                        #'(lambda (x) (equal x #\())
+                        #'(lambda (x) (equal x #\)))
+                        )
+  :when ((:paren descend))
+  :group-custom (let* ((ls (head-n (cons head tail) size))
+                       (inside (poprl ls))
+                       (res (pushr (pushl (test2-parens inside) #\() #\)))
+                       )
+                  (list res
+                        (car (popl-n tail (- size 1)))
+                        (popl-n tail size)
+                        )
+
+                  )
+  )
+
+(defstage "test2" "brace"
+  :test (nestable-match (cons head tail)
+                        #'(lambda (x) (equal x #\{))
+                        #'(lambda (x) (equal x #\}))
+                        )
+  :when ((:paren descend))
+  :group-custom (let* ((ls (head-n (cons head tail) size))
+                       (inside (poprl ls))
+                       (res (pushr (pushl (test2-braces inside) #\{) #\}))
+                       )
+                  (list res
+                        (car (popl-n tail (- size 1)))
+                        (popl-n tail size)
+                        )
+
+                  )
+  )
+
+(defun test-def-nest ()
+  (pipeline (str-to-char-ls "(this is (text {that uses} braces (and
+  {parens}){it's not (a big deal)}))")
+                            #'test-parens
+                            #'test-braces
+                            )
+  )
+
+(defun html-start-tag (tag)
+  (pushr '() '(#\<) (str-to-char-ls tag) '(#\>))
+  )
+
+(defun html-end-tag (tag)
+  (pushr '() '(#\< #\/) (str-to-char-ls tag) '(#\>))
+  )
+
+
+
+(defmacro! html-recursive-grouper (parent tag)
+  `(let* ((ls (head-n (cons head tail) size))
+          (inside (poprl ls))
+          (res (pushr (pushl (,parent inside)
+                             (html-start-tag ,tag))
+                      (html-end-tag ,tag)))
+          )
+    (list res
+          (car (popl-n tail (- size 1)))
+          (popl-n tail size)
+          )
+    )
+  )
+
+(defmacro! def-html-stage (name tag &key when)
+  `(defstage "html" ,name
+     :test (nestable-match (cons head tail)
+                           #'(lambda (x) (match-html-start-tag ,tag x))
+                           #'(lambda (x) (match-html-end-tag ,tag x))
+                           )
+     :group-custom (html-recursive-grouper
+                    (string-to-symbol (str-cat "html-" `,name "s"))
+                    ,tag)
+     :when ,when
+     )
+  )
+
+(defstage "html" "tag"
+  :test (finite-match (cons head tail)
+                      (list
+                       (list :m #'(lambda (n)
+                                    (match-any-puncs-ls '("</" "<")  n)))
+                       (list :o #'is-blank-group)
+                       (list :m #'is-word-group)
+                       (list :o #'is-blank-group)
+                       (list :mc #'is-html-attribute-list)
+                       (list :m #'(lambda (n) (match-punc-ls '(">") n)))
+                       )
+         )
+  :tests-aux ((is-html-attribute-list (head tail)
+                                      (finite-repeating-match (cons head tail)
+                                        (list
+                                          (list :m #'is-word-group)
+                                          (list :o #'is-blank-group)
+                                          (list :m #'is-eq-group)
+                                          (list :o #'is-blank-group)
+                                          (list :m #'(lambda (x)
+                                                      (or (is-word-group x)
+                                                          (is-str x))))
+                                          )
+                                        (list
+                                          (list :m #'(lambda (x) nil)))
+                                        :opt-ematch t
+                                      )
+              ))
+  )
+
+(defun match-html-start-tag (str x)
+  (and (html-tagp x) (match-punc-ls "<" (car x))
+       (or (match-str-list str (cadr x))
+           (match-str-list str (caddr x)))
+       )
+  )
+
+(defun match-html-end-tag (str x)
+  (and (html-tagp x) (match-punc-ls "</" (car x))
+       (or (match-str-list str (cadr x))
+           (match-str-list str (caddr x)))
+       )
+  )
+
+
+(def-html-stage "paragraph" "p")
+
+(def-html-stage "link" "a"
+  :when ((:paragraph descend))
+  )
+
+(def-html-stage "bold" "b"
+  :when ((:paragraph descend)
+         (:link descend)
+         )
+  )
+
+(def-html-stage "emph" "em"
+  :when ((:paragraph descend)
+         (:link descend)
+         (:bold descend)
+         )
+  )
+
+(def-html-stage "blockquote" "blockquote"
+  :when ((:paragraph descend)
+         (:link descend)
+         (:bold descend)
+         (:emph descend)
+         )
+  )
+
+(def-html-stage "bod" "body"
+  :when ((:paragraph descend)
+         (:link descend)
+         (:bold descend)
+         (:emph descend)
+         (:blockquote descend)
+         )
+  )
+
+(def-html-stage "div" "div"
+  :when ()
+  )
+
+;(def-html-stage "tag-pair"
+  ;)
+
+(vdefun html-to-ast (input)
+  (pipeline input
+            #'html-cmt-str
+            #'white-space
+            #'blanks
+            #'words
+            #'punctuations
+            #'html-tags
+            #'html-paragraphs
+            #'html-links
+            #'html-bolds
+            #'html-emphs
+            #'html-blockquotes
+            )
+  )
+
 
 
 (defun ws-has-newline (e)

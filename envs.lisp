@@ -141,8 +141,8 @@
       )
      ))
 
-(defmacro! new-js-env (name repo-nm commit &key pref antipref depth verbose
-                            req extend-idx)
+(defmacro! js-env (name repo-nm commit &key pref antipref depth verbose
+                            req extend-idx (style 'js-dap-like-style))
   `(progn
      (new-env-req ,req ,verbose)
      (new-env ,name
@@ -154,7 +154,7 @@
        (idx-type-conv #'js-idx-type-to-test)
        (files (all-files repo commit ".js" ,pref ,antipref ,depth))
        (pagesz 70)
-       (ast-fmt #'js-dap-like-style)
+       (ast-fmt #',style)
        (parser #'js-to-ast)
        (parser-suf ".js")
        (parser-pref ,pref)
@@ -203,8 +203,8 @@
        )
   ))
 
-(defmacro! new-c-env (name repo-nm commit &key pref antipref depth verbose
-                           require extend-idx)
+(defmacro! c-env (name repo-nm commit &key pref antipref depth verbose
+                           require extend-idx style)
   `(progn
      (new-env-req ,require ,verbose)
      (new-env ,name
@@ -217,7 +217,7 @@
        (files (all-files repo commit ".c" ,pref ,antipref ,depth))
        (pagesz 70)
        ;(ast-fmt #'(lambda (a) (c-ast-fmt nil a :simtupid)))
-       (ast-fmt #'c-joyent-style)
+       (ast-fmt (if (not ,style) #'c-joyent-style #',style))
        (parser #'c-to-ast)
        (parser-suf ".c")
        (parser-pref ,pref)
