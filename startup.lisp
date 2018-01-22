@@ -1,6 +1,25 @@
 ;;; When loading, we need 2 passes to accomodate definition-after-use
 ;;; Could be avoided with FASL format but why bother?
-(defvar blip-root "/depot/synthesis/blip/")
-(defvar blip-platform "smartos")
+(defvar blip-root)
+(defvar blip-flavor)
+(defvar blip-quicklisp)
+(cond
+  ((equal (cadr sb-ext:*posix-argv*) "smartos")
+   (setf blip-root "/depot/synthesis/blip/")
+   (setf blip-flavor "smartos")
+   (setf blip-quicklisp "/opt/quicklisp/setup.lisp")
+   )
+  ((equal (cadr sb-ext:*posix-argv*) "lx")
+   (setf blip-root "/depot/synthesis/blip/")
+   (setf blip-flavor "lx")
+   (setf blip-quicklisp "~/quicklisp/setup.lisp")
+   )
+  ((and t)
+   (setf blip-root "/depot/synthesis/blip/")
+   (setf blip-flavor "smartos")
+   (setf blip-quicklisp "/opt/quicklisp/setup.lisp")
+   )
+  )
+
 (load "blip.lisp")
 (reload)

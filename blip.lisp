@@ -5,7 +5,7 @@
 ;;; Copyright 2017 Joyent, Inc.
 ;;; Copyright 2017 Nicholas Zivkovic
 
-(load "/opt/quicklisp/setup.lisp")
+(load blip-quicklisp)
 (ql:quickload "let-over-lambda")
 (ql:quickload "cl-quickcheck")
 (ql:quickload "drakma")
@@ -14,7 +14,7 @@
 ;(ql:quickload "vecto")
 (ql:quickload "cl-conspack")
 (ql:quickload "lhstats")
-(ql:quickload "trivial-ssh")
+;(ql:quickload "trivial-ssh")
 (ql:quickload "inferior-shell") ; Convenient for synchronous command execution
 (ql:quickload "cl-async") ; Libuv wrapper, convenient for background commands
 (ql:quickload "blackbird") ;promises over cl-async
@@ -136,7 +136,7 @@
   (sleep s)
   s)
 
-(defun pipeline (arg &rest fns)
+(defun pipeline-old (arg &rest fns)
   "Takes a list of 1 args funcs, and chains them in a pipeline, so that each
    function takes the return value of the previous function as its argument"
   (iter:iter
@@ -144,6 +144,27 @@
     (iter:for (values ret time) initially (values arg 0) then (timed-funcall f ret))
     (iter:after-each (iter:collect (list f time) into timing))
     (iter:finally (return (values ret timing)))))
+
+(defun pipeline (arg &rest fns)
+  (let ((ret arg))
+    (do-group (f fns)
+      (setf ret (funcall f ret))
+      )
+    ret
+    )
+  )
+
+(defmacro! pipeline+ (arg &rest fns)
+  (let (
+        (ret '())
+        )
+    (setf ret (list (car fns) arg))
+    (do-group (f (cdr fns))
+      (setf ret (list f ret))
+      )
+    ret
+    )
+  )
 
 (defun pipeline-until-aux (arg fns)
   (if (and fns)
@@ -377,7 +398,7 @@
 (defvar blip-tmp (blip-dir (str-cat blip-meta "tmp/")))
 (defvar blip-du (blip-dir (str-cat blip-meta "disk-usage/")))
 (defvar blip-bin (blip-dir (str-cat blip-meta "bin/")))
-(mkdir (str-cat blip-bin "/" blip-platform "/"))
+(mkdir (str-cat blip-bin "/" blip-flavor "/"))
 (defvar blip-env (blip-dir (str-cat blip-meta "env/")))
 (defvar blip-in-xform nil)
 (defvar blip-xform-args nil)
@@ -385,7 +406,7 @@
 (defvar blip-env-stack (blip-file (str-cat blip-env "stack")))
 (defvar blip-env-avail (blip-file (str-cat blip-env "avail")))
 (defvar blip-env-sha (blip-file (str-cat blip-env "sha")))
-(defvar blip-core (str-cat blip-bin "/" blip-platform "/blip"))
+(defvar blip-core (str-cat blip-bin "/" blip-flavor "/blip"))
 (defvar blip-logs (blip-dir (str-cat blip-meta "logs/")))
 (defvar blip-repos (blip-dir (str-cat blip-stor "repos/")))
 (defvar blip-asts (blip-dir (str-cat blip-stor "repo-asts/")))
@@ -1288,8 +1309,10 @@
 (defun main ()
   "The main entry point for this program."
   (init-vdefun-stream)
+  (set-blip-err-out *error-output*)
   (let* ((argv sb-ext:*posix-argv*))
     (stack-pushr blip-vdefun-log (list 'args argv))
+    (stack-pushr blip-vdefun-log (list 'flavor blip-flavor))
     (main-impl argv)
     (cond
       ((and blip-vdefun-stream)
@@ -2876,13 +2899,6 @@
 (defun is-c-fdef-end (ls)
   (is-curly-group ls))
 
-(defun is-js-word-or-fcall-or-arr (ls)
-  (or (is-js-fcall ls) (is-js-arr ls) (is-word-group ls))
-  )
-
-(defun is-js-word-or-arr (ls)
-  (or (is-js-arr ls) (is-word-group ls))
-  )
 
 (defun is-js-word-or-str (ls)
   (or (is-str ls) (is-word-group ls))
@@ -3000,17 +3016,8 @@
 (defun is-c-fdef (ls)
   (and ls (listp ls) (c-fdefp (car ls) (cdr ls))))
 
-(defun is-js-fdef (ls)
-  (and ls (listp ls) (js-fdefp (car ls) (cdr ls))))
 
-(defun is-js-curly-ctl-stmt (ls)
-  (and ls (listp ls) (js-curly-ctl-stmtp (car ls) (cdr ls))))
 
-(defun is-js-if-else-chain (ls)
-  (and ls (listp ls) (js-if-else-chainp (car ls) (cdr ls))))
-
-(defun is-js-do-while-stmt (ls)
-  (and ls (listp ls) (js-do-while-stmtp (car ls) (cdr ls))))
 
 (defun is-ctl-word (ls)
   (or (match-str-list "if" ls)
@@ -3018,40 +3025,12 @@
       (match-str-list "for" ls)
       (match-str-list "switch" ls)))
 
-(defun is-js-flat-ctl-stmt (ls)
-  (and ls (listp ls) (not (is-js-curly-ctl-stmt ls)) (is-ctl-word (car ls))))
+
 
 (defun is-js-any-ctl-stmt (ls)
   (or (is-js-curly-ctl-stmt ls) (is-js-flat-ctl-stmt ls)
       (is-js-do-while-stmt ls) (is-js-if-else-chain ls)))
 
-(defun is-js-fdef-binding (ls)
-  (and ls (listp ls) (js-fdef-bindingp (car ls) (cdr ls))))
-
-(defun is-js-var-binding (ls)
-  (and ls (listp ls) (not (is-js-fdef-binding ls))
-       (or (is-word-group (car ls)) (is-js-arr (car ls)))
-       (or (is-eq-group (cadr ls)) (is-eq-group (caddr ls)))))
-
-(defun is-js-binding (ls)
-  (and ls (listp ls)
-       (or (is-js-fdef-binding ls)
-           (is-js-var-binding ls))))
-
-(defun is-js-obj-lit-rec (ls)
-  (and ls (listp ls)
-       (or (is-word-group (car ls)) (is-str (car ls)))
-       (or (is-colon-group (cadr ls)) (is-eq-group (caddr ls)))
-       ))
-
-(defun is-js-fcall (ls)
-  (and ls (listp ls)
-       (not (is-js-fdef ls))
-       (js-fcallp (car ls) (cdr ls))))
-
-(defun is-js-arr (ls)
-  (and (listp ls)
-       (js-arrp (car ls) (cdr ls))))
 
 (defun is-c-fcall (ls)
   (and ls (listp ls)
@@ -3263,42 +3242,47 @@
 (defun xform-js-do-while-cgroup (cstmt cb)
   (xform-js-do-while-cgroup-aux '() (car cstmt) (cdr cstmt) cb))
 
-(defun finite-match-aux (head tail match-fns count)
-  (let* ((pair (car match-fns))
-         (type (car pair))
-         (func (cadr pair))
-         (match (if (and func) (funcall func head) nil))
-         (cmatch (if (and func) (funcall func (cons head tail)) nil))
-         (cdroff cmatch)
-         (caroff cdroff)
-         )
-    (cond
-      ((not match-fns)
-       count)
-      ((and (equal type :m) (not match))
-       nil)
-      ((and (equal type :mc) (not cmatch))
-       nil)
-      ((and (equal type :m) match)
-       (finite-match-aux (car tail) (cdr tail) (cdr match-fns) (+ count 1)))
-      ((and (equal type :mc) cmatch)
-       (finite-match-aux (nth caroff tail) (nthcdr cdroff tail) (cdr match-fns)
-                         (+ count cmatch)))
-      ((and (equal type :o) match)
-       (finite-match-aux (car tail) (cdr tail) (cdr match-fns) (+ count 1)))
-      ((and (equal type :oc) cmatch)
-       (finite-match-aux (nth caroff tail) (nthcdr cdroff tail) (cdr match-fns)
-                         (+ count cmatch)))
-      ((and (equal type :o) (not match))
-       (finite-match-aux head tail (cdr match-fns) count))
-      ((and (equal type :oc) (not cmatch))
-       (finite-match-aux head tail (cdr match-fns) count))
-      ((and t) ;should never get here
-       (assert nil))
-    )))
-
 (defun finite-match (ls match-fns)
-  (finite-match-aux (car ls) (cdr ls) match-fns 0))
+  (declare (optimize (speed 3) (safety 0)))
+  (let ((count 0)
+        (type nil)
+        (fn nil)
+        (tail (cdr ls))
+        (head (car ls))
+        (state '())
+        )
+    (do-group (pair match-fns)
+      (let* ((type (car pair))
+             (func (cadr pair))
+             (match (funcall func head))
+             (cmatch (funcall func (cons head tail)))
+             (cdroff cmatch)
+             (caroff cdroff)
+             )
+        (cond
+          ((or (and (equal type :m) (not match))
+               (and (equal type :mc) (not cmatch))
+               )
+           (return-from finite-match (values nil state))
+           )
+          ((or (and (equal type :mc) cmatch)
+               (and (equal type :oc) cmatch))
+           (setf head (nth caroff tail))
+           (setf tail (nthcdr cdroff tail))
+           (incf count cmatch)
+           )
+          ((or (and (equal type :o) match)
+               (and (equal type :m) match))
+           (setf head (car tail))
+           (setf tail (cdr tail))
+           (incf count)
+           )
+          )
+        )
+      )
+    (values count state)
+    )
+  )
 
 (defun finite-repeating-match (ls rmatch-fns ematch-fns &key opt-rmatch opt-ematch)
   "Just like finite-match, except we match rmatch-fns in a loop, until it
@@ -3428,6 +3412,7 @@
                                          mbr-chain)
   `(progn
      (defun ,self (acc head tail)
+       ;(declare (optimize (speed 3) (safety 0)))
        (let ((sz (,matcher head tail)))
          (try-each
            ((and sz)
@@ -3703,6 +3688,10 @@
       (pushr! ret (append '(defun) n))
       )
     (pushr! ret (list 'defun test-nm (list 'head 'tail) test))
+
+    (do-group (n tests-pub)
+      (pushr! ret (append '(defun) n))
+      )
     (do-group (n when)
       (pushr! body (car n))
       (cond
@@ -3735,7 +3724,11 @@
                         (list :o #'is-blank-group)
                         (list :m #'is-c-fdef-end)
                         )
-                       ))
+                      )
+  :tests-pub ((is-js-fdef (ls)
+                          (and ls (listp ls) (js-fdefp (car ls) (cdr ls))))
+              )
+  )
 
 (defstage "c" "fdef"
   :when ((:nestable descend))
@@ -3761,6 +3754,12 @@
                         (list :m #'is-paren-group)
                         )
                       )
+  :tests-pub (
+              (is-js-fcall (ls)
+                (and ls (listp ls)
+                     (not (is-js-fdef ls))
+                     (js-fcallp (car ls) (cdr ls))))
+              )
   )
 
 (defstage "c" "fcall"
@@ -3787,10 +3786,22 @@
                        (list :m #'is-bracket-group)
                        )
                       )
+  :tests-pub (
+              (is-js-arr (ls)
+                (and (listp ls)
+                     (js-arrp (car ls) (cdr ls))))
+              (is-js-word-or-fcall-or-arr (ls)
+                (or (is-js-fcall ls) (is-js-arr ls) (is-word-group ls))
+                )
+              (is-js-word-or-arr (ls)
+                (or (is-js-arr ls) (is-word-group ls))
+                )
+              )
   )
 
 (defstage "js" "var-binding"
   :when ((:fdef xform xform-js-fdef-cgroup)
+         (:fcall xform xform-fcall-pgroup)
          (:nestable descend))
   :group-if (is-js-fdef x)
   :tests-aux ((js-fdef-bindingp (head tail)
@@ -3820,6 +3831,18 @@
                          )
                         )
           )
+  :tests-pub (
+              (is-js-fdef-binding (ls)
+                (and ls (listp ls) (js-fdef-bindingp (car ls) (cdr ls))))
+              (is-js-var-binding (ls)
+                (and ls (listp ls) (not (is-js-fdef-binding ls))
+                     (or (is-word-group (car ls)) (is-js-arr (car ls)))
+                     (or (is-eq-group (cadr ls)) (is-eq-group (caddr ls)))))
+              (is-js-binding (ls)
+                (and ls (listp ls)
+                     (or (is-js-fdef-binding ls)
+                         (is-js-var-binding ls))))
+              )
   )
 
 (defstage "js" "mbr-chain"
@@ -3840,6 +3863,29 @@
                                  (list :o #'is-blank-group))
                                 (list
                                  (list :m #'is-word-arr-fcall-vbind-fbind)))
+  :tests-pub (
+              (is-js-mbr-chain (ls)
+                (and ls (listp ls) (js-mbr-chainp (car ls) (cdr ls))))
+              (is-js-mbr-chain-word-bind (ls)
+                "Detects mbr-chains that contain words and end in a binding"
+                (let ((fail nil))
+                  (if (and (is-js-mbr-chain ls) (is-js-binding (car (last ls))))
+                      (do-group (e ls)
+                        (if (not (or (is-blank-group e)
+                                     (is-punctuation-group e)
+                                     (is-word-group e)
+                                     (is-js-binding e))
+                                 )
+                            (setf fail t))
+                        (if (and (is-js-binding e) (is-js-arr (car e)))
+                            (setf fail t))
+                        ls)
+                      (setf fail t)
+                      )
+                  (not fail)
+                  )
+                )
+              )
           )
 
 (defstage "js" "obj-lit-rec"
@@ -3863,6 +3909,13 @@
                        (list :mc #'is-obj-lit-rval)
                        )
                       )
+  :tests-pub (
+              (is-js-obj-lit-rec (ls)
+                (and ls (listp ls)
+                     (or (is-word-group (car ls)) (is-str (car ls)))
+                     (or (is-colon-group (cadr ls)) (is-eq-group (caddr ls)))
+                     ))
+              )
           )
 
 (defstage "js" "curly-ctl-stmt"
@@ -3884,6 +3937,9 @@
                        (list :m #'is-paren-group)
                        (list :o #'is-blank-group)
                        (list :m #'is-curly-group)))
+  :tests-pub ((is-js-curly-ctl-stmt (ls)
+                  (and ls (listp ls) (js-curly-ctl-stmtp (car ls) (cdr ls))))
+              )
            )
 
 (defstage "js" "do-while-stmt"
@@ -3907,6 +3963,8 @@
                        (list :m #'is-paren-group)
                        (list :o #'is-blank-group)
                        ))
+  :tests-pub ((is-js-do-while-stmt (ls)
+                (and ls (listp ls) (js-do-while-stmtp (car ls) (cdr ls)))))
           )
 
 (defstage "js" "flat-ctl-stmt"
@@ -3940,6 +3998,8 @@
                        (list :m #'is-paren-group)
                        (list :o #'is-blank-group)
                        (list :mc #'is-stmt)))
+  :tests-pub ((is-js-flat-ctl-stmt (ls)
+                (and ls (listp ls) (not (is-js-curly-ctl-stmt ls)) (is-ctl-word (car ls)))))
           )
 
 (defstage "js" "if-else-chain"
@@ -3981,32 +4041,9 @@
           (list :m #'is-if-block-or-curly-group-or-stmt)
           )
          )
+  :tests-pub ((is-js-if-else-chain (ls)
+                (and ls (listp ls) (js-if-else-chainp (car ls) (cdr ls)))))
   )
-
-
-(defun is-js-mbr-chain (ls)
-  (and ls (listp ls) (js-mbr-chainp (car ls) (cdr ls))))
-
-(defun is-js-mbr-chain-word-bind (ls)
-  "Detects mbr-chains that contain words and end in a binding"
-  (let ((fail nil))
-    (if (and (is-js-mbr-chain ls) (is-js-binding (car (last ls))))
-        (do-group (e ls)
-          (if (not (or (is-blank-group e)
-                       (is-punctuation-group e)
-                       (is-word-group e)
-                       (is-js-binding e))
-                   )
-              (setf fail t))
-          (if (and (is-js-binding e) (is-js-arr (car e)))
-              (setf fail t))
-          ls)
-        (setf fail t)
-        )
-    (not fail)
-    )
-  )
-
 
 
 (defun js-vars (ast)
@@ -6087,6 +6124,19 @@
                                    nil)
                                   )
                                 )
+
+                            #'(lambda (x y stack)
+                                (cond
+                                  ((and (is-js-hyperlink x) (not (match-str-list ";" y)))
+                                   (let ((depth (count-if #'is-curly-group
+                                                          stack)))
+                                     (values x (gen-nl-ws (* depth 8)))
+                                     )
+                                   )
+                                  ((and t)
+                                   nil)
+                                  )
+                                )
                             #'(lambda (x y stack)
                                 (cond
                                   ((and (match-str-list ";" x)
@@ -6129,7 +6179,7 @@
                                                '("|" "||" "&" "&&" "^"
                                                  "," "+" ":" "?" "-"
                                                  "*" "/" "%" ;">" "<"
-                                                 "=" "("
+                                                 "=" "(" ">>>"
                                                  ;">=" "<=" "=" "=="
                                                  ;"!=" "!==" "==="
                                                 ) x)
@@ -6344,6 +6394,18 @@
                                   ((and t)
                                    nil)
                                   )
+                                 )
+                            #'(lambda (x y stack)
+                                (cond
+                                  ((and (is-js-hyperlink x) (not (match-str-list ";" y)))
+                                   (let ((depth (count-if #'is-curly-group
+                                                          stack)))
+                                     (values x (gen-nl-ws (* depth 8)))
+                                     )
+                                   )
+                                  ((and t)
+                                   nil)
+                                  )
                                 )
                             #'(lambda (x y stack)
                                 (cond
@@ -6537,85 +6599,22 @@
   `(valve #'validate-blank (enclose (gen-ws 1))))
 
 (vdefun js-to-ast (input)
-  (pipeline input #'cmt-str-regex #'white-space
-            #'blanks #'words #'punctuations
-            #'nestables
-            #'js-fdefs
-            #'js-fcalls
-            #'js-arrs
-            #'js-var-bindings
-            #'js-mbr-chains
-            #'js-obj-lit-recs
-            #'js-vars
-            #'js-curly-ctl-stmts
-            #'js-do-while-stmts
-            #'js-flat-ctl-stmts
+  (pipeline+ input cmt-str-regex white-space
+            blanks words punctuations
+            nestables
+            js-fdefs
+            js-fcalls
+            js-arrs
+            js-var-bindings
+            js-mbr-chains
+            js-obj-lit-recs
+            js-vars
+            js-curly-ctl-stmts
+            js-do-while-stmts
+            js-flat-ctl-stmts
             ;#'js-if-else-chains
             ))
 
-
-(defnestable "test" "paren"
-  :start-test (equal x #\()
-  :end-test (equal x #\))
-  :descend-if (if nil nil nil)
-  )
-
-
-(defnestable "test" "brace"
-  :start-test (equal x #\{)
-  :end-test (equal x #\})
-  :descend-if (and (listp x) (equal (car x) #\())
-  )
-
-(defun is-test2-paren (ls)
-  (and ls (listp ls) (test2-parenp (car ls) (cdr ls))))
-
-(defun is-test2-brace (ls)
-  (and ls (listp ls) (test2-bracep (car ls) (cdr ls))))
-
-(defstage "test2" "paren"
-  :test (nestable-match (cons head tail)
-                        #'(lambda (x) (equal x #\())
-                        #'(lambda (x) (equal x #\)))
-                        )
-  :when ((:paren descend))
-  :group-custom (let* ((ls (head-n (cons head tail) size))
-                       (inside (poprl ls))
-                       (res (pushr (pushl (test2-parens inside) #\() #\)))
-                       )
-                  (list res
-                        (car (popl-n tail (- size 1)))
-                        (popl-n tail size)
-                        )
-
-                  )
-  )
-
-(defstage "test2" "brace"
-  :test (nestable-match (cons head tail)
-                        #'(lambda (x) (equal x #\{))
-                        #'(lambda (x) (equal x #\}))
-                        )
-  :when ((:paren descend))
-  :group-custom (let* ((ls (head-n (cons head tail) size))
-                       (inside (poprl ls))
-                       (res (pushr (pushl (test2-braces inside) #\{) #\}))
-                       )
-                  (list res
-                        (car (popl-n tail (- size 1)))
-                        (popl-n tail size)
-                        )
-
-                  )
-  )
-
-(defun test-def-nest ()
-  (pipeline (str-to-char-ls "(this is (text {that uses} braces (and
-  {parens}){it's not (a big deal)}))")
-                            #'test-parens
-                            #'test-braces
-                            )
-  )
 
 (defun html-start-tag (tag)
   (pushr '() '(#\<) (str-to-char-ls tag) '(#\>))
@@ -6641,17 +6640,42 @@
     )
   )
 
-(defmacro! def-html-stage (name tag &key when)
-  `(defstage "html" ,name
-     :test (nestable-match (cons head tail)
-                           #'(lambda (x) (match-html-start-tag ,tag x))
-                           #'(lambda (x) (match-html-end-tag ,tag x))
-                           )
-     :group-custom (html-recursive-grouper
-                    (string-to-symbol (str-cat "html-" `,name "s"))
-                    ,tag)
-     :when ,when
-     )
+
+;;; XXX can this be used as an argument to a macro
+(defun html-test-pub (name)
+  (let* ((pub-fn (string-to-symbol (str-cat "is-html-" name)))
+         (inner-test (string-to-symbol (str-cat "html-" name "p")))
+         (ret (list pub-fn (list 'ls) (list 'and (list 'listp 'ls)
+                                            (list inner-test
+                                                  (list 'car 'ls)
+                                                  (list 'cdr 'ls)
+                                                  ))))
+
+        )
+    ;`(,pub-fn (ls)
+              ;(and (lisp ls)
+                   ;(,inner-test (car ls) (cdr ls))
+                   ;)
+              ;)
+    (list ret)
+    )
+  )
+
+(defmacro! def-html-stage (name tag &key when tests-pub)
+  (let* ((default-test-pub (html-test-pub name))
+         (tests-pub (append default-test-pub tests-pub))
+         (parent (string-to-symbol (str-cat "html-" name "s")))
+         )
+    `(defstage "html" ,name
+       :test (nestable-match (cons head tail)
+                             #'(lambda (x) (match-html-start-tag ,tag x))
+                             #'(lambda (x) (match-html-end-tag ,tag x))
+                             )
+       :group-custom (html-recursive-grouper ,parent ,tag)
+       :when ,when
+       :tests-pub ,tests-pub
+       )
+    )
   )
 
 (defstage "html" "tag"
