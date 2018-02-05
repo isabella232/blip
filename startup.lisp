@@ -3,6 +3,7 @@
 (defvar blip-root)
 (defvar blip-flavor)
 (defvar blip-quicklisp)
+(defvar blip-user-agent :firefox)
 (cond
   ((equal (cadr sb-ext:*posix-argv*) "smartos")
    (setf blip-root "/depot/synthesis/blip/")

@@ -11,6 +11,69 @@
 ;(setf env-avail (file-to-form blip-env-avail))
 (defvar env-avail nil)
 
+
+(defun env-ls ()
+  env-avail)
+
+(defun env-stack ()
+  (map 'list #'(lambda (e) (slot-value e 'name)) env-stack))
+
+                                        ;(form-to-file (env-ls) blip-env-avail)
+
+(defun pushenv (e)
+  (pushr! env-stack e)
+  nil
+  )
+
+(defun popenv ()
+  (popr! env-stack)
+  nil
+  )
+
+(defun get-env-var (var)
+  (let ((e (car (last env-stack))))
+    (slot-value e var)))
+
+(defun get-env ()
+  (car (last env-stack))
+  )
+
+(defun set-env-var (var val)
+  (let ((e (car (last env-stack))))
+    (setf (slot-value e var) val)
+    )
+  )
+
+
+(defmacro! defslot (name &key initform)
+  (let ((kw (symbol-to-keyword name)))
+    `(,name :initarg ,kw :initform ,initform :accessor ,name)
+    )
+  )
+
+(defun defslot-fn (name &key initform)
+  (list name :initarg (symbol-to-keyword name)
+             :initform initform :accessor name)
+  )
+
+(defmacro! def-env (env-name parent slot-body)
+  ;(assert (not (equal env-name 'env)))
+  (let ((slot-bodies '())
+        )
+    (do-group (b slot-body)
+      (pushr! slot-bodies (defslot-fn (car b) :initform (cadr b)))
+      )
+    `(progn
+       (defclass ,env-name (,@(if (and parent) (list parent)))
+         ((,env-name :initarg :token-member :initform nil)
+          ,@slot-bodies
+          )
+         )
+       )
+    )
+  )
+
+
 (defun all-files (repo commit suf pref antipref &optional depth)
   (let* ((fs (list-files-at-commit
                  repo commit :suf suf :pref pref :antipref antipref)))
@@ -64,71 +127,57 @@
 (defun test-fdepth ()
   (map 'list #'(lambda (p) (intersperse p "/" t)) (set-env-file-depth 2)))
 
-(defclass env ()
-  ((repo :initarg :repo)
-   (commit :initarg :commit)
-   (name :initarg :name)
-   (indexer :initarg :indexer)
-   (idx-type :initarg :idx-type)
-   (idx-type-conv :initarg :idx-type-conv)
-   (files :initarg :files)
-   (pagesz :initarg :pagesz)
-   (ast-fmt :initarg :ast-fmt)
-   (parser :initarg :parser)
-   (parser-suf :initarg :parser-suf)
-   (parser-pref :initarg :parser-pref)
-   (parser-antipref :initarg :parser-antipref)
-   (ast-ls-call :initarg :ast-ls-call)
-   (ast-ls-def :initarg :ast-ls-def)
-   (ast-ls-fbind :initarg :ast-ls-fbind)
-   (ast-ls-word :initarg :ast-ls-word)
-   (what-requires :initarg :what-requires)
-   (requires-what :initarg :requires-what)
-   (bottom-deps :initarg :bottom-deps)
-   (top-deps :initarg :top-deps)
-   (what-exports :initarg :what-exports)
-   (exports-what :initarg :exports-what))
+(def-env env ()
+  ((repo)
+   (commit)
+   (name)
+   (indexer)
+   (env-type)
+   (idx-type)
+   (idx-type-conv)
+   (files)
+   (pagesz)
+   (ast-fmt)
+   (pre-processor)
+   (parser)
+   (parser-suf)
+   (parser-pref)
+   (parser-antipref)
+   (ast-ls-call)
+   (ast-ls-def)
+   (ast-ls-fbind)
+   (ast-ls-word)
+   (what-requires)
+   (requires-what)
+   (bottom-deps)
+   (top-deps)
+   (what-exports)
+   (exports-what)
+   (ext-idx)
    )
-
-(defun env-ls ()
-  env-avail)
-
-(defun env-stack ()
-  (map 'list #'(lambda (e) (slot-value e 'name)) env-stack))
-
-(defmacro! new-env%% (name repo commit indexer idx-type idx-type-conv
-                           files pagesz ast-fmt parser parser-suf parser-pref
-                           parser-antipref
-                           ast-ls-call ast-ls-def ast-ls-fbind ast-ls-word
-                           what-requires requires-what bottom-deps top-deps
-                           what-exports exports-what)
-  `(let ((tmp (make-instance 'env :repo ,repo :name ',name :commit ,commit
-                  :indexer ,indexer :idx-type ,idx-type :idx-type-conv
-                  ,idx-type-conv :files ,files :pagesz ,pagesz :ast-fmt ,ast-fmt
-                  :parser ,parser :parser-suf ,parser-suf :parser-pref
-                  ,parser-pref :parser-antipref ,parser-antipref :ast-ls-call
-                  ,ast-ls-call :ast-ls-def ,ast-ls-def
-                  :ast-ls-fbind ,ast-ls-fbind :ast-ls-word ,ast-ls-word
-                  :what-requires ,what-requires :requires-what ,requires-what
-                  :bottom-deps ,bottom-deps :top-deps ,top-deps
-                  :what-exports ,what-exports :exports-what ,exports-what)))
-    (pushr! env-avail ',name)
-    (pushr! env-pool tmp)
-    ;(setf ,name tmp)
-     ;;; TODO: save this env to a file
-    tmp
-    )
   )
 
-(defmacro! new-env (name &body body)
-  `(let* (,@body)
-    ;(assert (and repo commit indexer idx-type idx-type-conv files parser
-                 ;parser-suf parser-pref ast-ls-call ast-ls-def))
-     (new-env%% ,name repo commit indexer idx-type idx-type-conv files pagesz
-                ast-fmt parser parser-suf parser-pref parser-antipref ast-ls-call
-                ast-ls-def ast-ls-fbind ast-ls-word what-requires requires-what
-                bottom-deps top-deps what-exports exports-what)
-    )
+(def-env js-env env
+  ((env-type 'js)
+   (idx-type :funcs)
+   (idx-type-conv #'js-idx-type-to-test)
+   (indexer (make-instance 'js-indexer))
+   (pagesz 70)
+   (ast-fmt #'js-dap-like-style)
+   (parser #'js-to-ast)
+   (pre-processor nil)
+   (parser-suf ".js")
+   (ast-ls-call #'js-list-fcalls)
+   (ast-ls-def #'js-list-fdefs)
+   (ast-ls-fbind #'js-list-fbinds)
+   (ast-ls-word #'js-list-words)
+   (requires-what #'js-requires-what)
+   (what-requires #'js-what-requires)
+   (bottom-deps #'js-bottom-deps)
+   (top-deps #'js-top-deps)
+   (exports-what nil)
+   (what-exports nil)
+   )
   )
 
 (defmacro! new-env-req (r v)
@@ -141,125 +190,112 @@
       )
      ))
 
-(defmacro! js-env (name repo-nm commit &key pref antipref depth verbose
-                            req extend-idx (style 'js-dap-like-style))
+(defmacro! init-env (class name repo-nm commit &key pref antipref depth verbose
+                          req extend-idx style)
   `(progn
      (new-env-req ,req ,verbose)
-     (new-env ,name
-       (repo ,repo-nm)
-       (commit (expand-commit ,repo-nm ,commit))
-       (ext-idx (if (and ,extend-idx) ,extend-idx (lambda (ix) ix)))
-       (indexer (funcall ext-idx (make-instance 'js-indexer)))
-       (idx-type :funcs)
-       (idx-type-conv #'js-idx-type-to-test)
-       (files (all-files repo commit ".js" ,pref ,antipref ,depth))
-       (pagesz 70)
-       (ast-fmt #',style)
-       (parser #'js-to-ast)
-       (parser-suf ".js")
-       (parser-pref ,pref)
-       (parser-antipref ,antipref)
-       (ast-ls-call #'js-list-fcalls)
-       (ast-ls-def #'js-list-fdefs)
-       (ast-ls-fbind #'js-list-fbinds)
-       (ast-ls-word #'js-list-words)
-       (requires-what #'js-requires-what)
-       (what-requires #'js-what-requires)
-       (bottom-deps #'js-bottom-deps)
-       (top-deps #'js-top-deps)
-       (exports-what nil)
-       (what-exports nil)
+     (let ((env (make-instance ',class))
+           )
+       (setf (name env) ',name)
+       (setf (repo env) ,repo-nm)
+       (setf (commit env) (expand-commit ,repo-nm ,commit))
+    ;;; TODO figure out ext-idx and it's use to set indexer
+       (setf (ext-idx env) (if (and ,extend-idx) ,extend-idx (lambda (ix) ix)))
+       (setf (files env) (all-files (repo env) ,commit (parser-suf env) ,pref ,antipref ,depth))
+       (setf (parser-pref env) ,pref)
+       (setf (parser-antipref env) ,antipref)
+       (if (and ,style)
+           (setf (ast-fmt env) ,style))
+       (pushr! env-avail ',name)
+       (pushr! env-pool env)
+       env
        )
      ))
 
-(defmacro! new-cl-env (name repo-nm commit &key pref antipref depth verbose
-                            require extend-idx)
-  `(progn
-     (new-env-req ,require ,verbose)
-     (new-env ,name
-       (repo ,repo-nm)
-       (commit (expand-commit ,repo-nm ,commit))
-       (ext-idx (if (and ,extend-idx) ,extend-idx (lambda (ix) ix)))
-       (indexer (funcall ext-idx (make-instance 'cl-indexer)))
-       (idx-type :funcs)
-       (idx-type-conv #'cl-idx-type-to-test)
-       (files (all-files repo commit ".lisp" ,pref ,antipref ,depth))
-       (pagesz 70)
-       (ast-fmt #'(lambda (a) (cl-ast-fmt nil a :simtupid)))
-       (parser #'cl-to-ast)
-       (parser-suf ".lisp")
-       (parser-pref ,pref)
-       (parser-antipref ,antipref)
-       (ast-ls-call #'js-list-fcalls)
-       (ast-ls-def #'js-list-fdefs)
-       (ast-ls-fbind #'js-list-fbinds)
-       (ast-ls-word #'js-list-words)
-       (requires-what #'js-requires-what)
-       (what-requires #'js-what-requires)
-       (bottom-deps #'js-bottom-deps)
-       (top-deps #'js-top-deps)
-       (exports-what nil)
-       (what-exports nil)
+
+(defmacro! new-env (env-type)
+  `(defmacro! ,env-type (name repo-nm commit &key pref antipref depth verbose
+                           req extend-idx style)
+     (let ((class ',env-type)
+           )
+    `(init-env ,class ,name ,repo-nm ,commit :pref ,pref :antipref ,antipref
+                                               :depth ,depth :verbose ,verbose :req ,req
+                                               :extend-idx ,extend-idx :style ,style)
        )
-  ))
-
-(defmacro! c-env (name repo-nm commit &key pref antipref depth verbose
-                           require extend-idx style)
-  `(progn
-     (new-env-req ,require ,verbose)
-     (new-env ,name
-       (repo ,repo-nm)
-       (commit (expand-commit ,repo-nm ,commit))
-       (ext-idx (if (and ,extend-idx) ,extend-idx (lambda (ix) ix)))
-       (indexer (funcall ext-idx (make-instance 'c-indexer)))
-       (idx-type :funcs)
-       (idx-type-conv #'c-idx-type-to-test)
-       (files (all-files repo commit ".c" ,pref ,antipref ,depth))
-       (pagesz 70)
-       ;(ast-fmt #'(lambda (a) (c-ast-fmt nil a :simtupid)))
-       (ast-fmt (if (not ,style) #'c-joyent-style #',style))
-       (parser #'c-to-ast)
-       (parser-suf ".c")
-       (parser-pref ,pref)
-       (parser-antipref ,antipref)
-       (ast-ls-call #'c-list-fcalls)
-       (ast-ls-def #'c-list-fdefs)
-       (ast-ls-fbind nil)
-       (ast-ls-word #'c-list-words)
-       (requires-what nil)
-       (what-requires nil)
-       (bottom-deps nil)
-       (top-deps nil)
-       (exports-what nil)
-       (what-exports nil)
-       )
-     ))
-
-;(form-to-file (env-ls) blip-env-avail)
-
-(defun pushenv (e)
-  (pushr! env-stack e)
-  nil
-  )
-
-(defun popenv ()
-  (popr! env-stack)
-  nil
-  )
-
-(defun get-env-var (var)
-  (let ((e (car (last env-stack))))
-    (slot-value e var)))
-
-(defun get-env ()
-  (car (last env-stack))
-  )
-
-(defun set-env-var (var val)
-  (let ((e (car (last env-stack))))
-    (setf (slot-value e var) val)
     )
   )
+
+(new-env js-env)
+
+
+
+(def-env c-env env
+  ((env-type 'c)
+   (idx-type :funcs)
+   (idx-type-conv #'c-idx-type-to-test)
+   (indexer (make-instance 'c-indexer))
+   (pagesz 70)
+   (ast-fmt #'c-joyent-style)
+   (parser #'c-to-ast)
+   (pre-processor nil)
+   (parser-suf ".c")
+   (ast-ls-call #'c-list-fcalls)
+   (ast-ls-def #'c-list-fdefs)
+   (ast-ls-fbind nil)
+   (ast-ls-word #'c-list-words)
+   (requires-what)
+   (what-requires)
+   (bottom-deps)
+   (top-deps)
+   (exports-what)
+   (what-exports)
+   )
+  )
+
+
+(new-env c-env)
+
+
+(def-env pp-c-env c-env
+  ((env-type 'pp-c)
+   (pre-processor #'cpp)
+   )
+  )
+
+(new-env pp-c-env)
+
+(def-env cl-env env
+  ((env-type 'cl)
+   (idx-type :funcs)
+   (idx-type-conv #'cl-idx-type-to-test)
+   (indexer (make-instance 'cl-indexer))
+   (pagesz 70)
+   (ast-fmt #'(lambda (a) (cl-ast-fmt nil a :simtupid)))
+   (parser #'cl-to-ast)
+   (pre-processor)
+   (parser-suf ".lisp")
+   ;;; TODO define these
+   (ast-ls-call)
+   (ast-ls-def)
+   (ast-ls-fbind)
+   (ast-ls-word)
+   (requires-what)
+   (what-requires)
+   (bottom-deps)
+   (top-deps)
+   (exports-what)
+   (what-exports)
+   )
+  )
+
+(defun cl-env (name repo-nm commit &key pref antipref depth verbose
+                                     req extend-idx style)
+  (init-env cl-env name repo-nm commit :pref pref :antipref antipref
+                                       :depth depth :verbose verbose :req req
+                                       :extend-idx extend-idx :style style)
+  )
+
+(new-env cl-env)
 
 (defmacro! do-indices (args force alt-idx-type full-idx &body body)
   (assert (= (length args) 2))
@@ -383,6 +419,9 @@
       (init-ix-repo-commits indexer)
       (let ((full-list nil)
             (filt-list nil))
+        ;;; XXX WE LIST FILES IN THE HEAD COMMIT, EVEN IF WE ONLY CARE ABOUT
+        ;;; OLDER ONES IN WHICH THEY DO NOT EXIST
+        ;;; TODO FIX
         (setf full-list (map 'list
                              #'(lambda (f)
                                  (list f
@@ -461,11 +500,16 @@
          (pref (get-env-var 'parser-pref))
          (antipref (get-env-var 'parser-antipref))
          (parser (get-env-var 'parser))
+         (indexer (get-env-var 'indexer))
+         (pre-processor (get-env-var 'pre-processor))
          )
     (git-update-file-logs repo (ast-ls-files))
     (parse-x-files-at-commit repo cmt :force force :suf suf
                                       :pref pref :parser parser
-                                      :whitelist (ast-ls-files))
+                                      :whitelist (ast-ls-files)
+                                      :indexer indexer
+                                      :pre-process pre-processor
+                                      )
     )
   )
 

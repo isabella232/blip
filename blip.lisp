@@ -28,6 +28,7 @@
 (load "diff-sexp.lisp")
 
 (defmacro defmacro! (&body body)
+  ;;; TODO FIX
   "Shorthand for lol:defmacro"
   `(lol:defmacro! ,@body))
 
@@ -434,7 +435,7 @@
   )
 
 (defun pre-load-envs (&rest envs)
-  (setf blip-pre-loaded-envs envs)
+  (setf blip-pre-loaded-envs (append blip-pre-loaded-envs envs))
   nil
   )
 
@@ -481,22 +482,6 @@
     (dolist (s (ql-dist:provided-systems (ql-dist:find-dist "quicklisp")) rdeps)
       (if (member system (ql-dist:required-systems s) :test #'equal)
           (push (ql-dist:name s) rdeps)))))
-
-(defun github-user-repos-url (user)
-  "Creates github URL that we can use to access a user's repos"
-  (str-cat github-api-url "users/" user "/repos"))
-
-(defun repo-spec-to-github-url (spec)
-  (str-cat github-base-url spec ".git"))
-
-(defun repo-specs-to-github-urls (specs)
-  (map 'list #'repo-spec-to-github-url specs))
-
-(defun repo-spec-to-gerrit-url (spec)
-  (str-cat gerrit-base-url spec ".git"))
-
-(defun repo-specs-to-gerrit-urls (specs)
-  (map 'list #'repo-spec-to-gerrit-url specs))
 
 (defun reload ()
   "Reloads this file"
@@ -835,7 +820,6 @@
                      )
                  (pushr! envs entry)
                  (forms-to-file envs blip-env-cfg)
-                 ;;; TODO write the file, but test this out first
                  )
                 ((and t)
                  (e-puts "Env with name ~d already exists." name)
@@ -857,7 +841,12 @@
     )
   )
 
+(defmacro! init-random-state ()
+  (setf *random-state* (make-random-state t))
+  )
+
 (defun main-impl (argv)
+  (init-random-state)
   (def-cli (cadr argv) (cddr argv)
     (def-cli-verb "env-ls"
       :body ((let ((envs (file-to-forms blip-env-cfg))
@@ -1082,6 +1071,29 @@
                                 (get-env-var 'commit))))
              )
       )
+    (def-cli-verb "ast-count-groups"
+      :args ("file")
+      :flags ("chars")
+      :body (
+             (load-top-env)
+             (puts "~a"
+                   (count-groups chars
+                    (load-ast (get-env-var 'repo)
+                              file
+                              (get-env-var 'commit))))
+             )
+      )
+    (def-cli-verb "ast-ranges"
+      :args ("file")
+      :body (
+             (load-top-env)
+             (print-range-tree
+                   (ast-to-range-tree
+                                 (load-ast (get-env-var 'repo)
+                                           file
+                                           (get-env-var 'commit))))
+             )
+      )
     (def-cli-verb "what-requires"
       :args ("file")
       :flags ("force")
@@ -1170,29 +1182,85 @@
                )
              )
       )
+    (def-cli-verb "github-user-repos"
+      :args ("user-name")
+      :flags ("fetch")
+      :body (
+             (let ((repos '())
+                   )
+               (cond
+                 ((and fetch)
+                  (cache-svc-user-repo-list "github" user-name)
+                  )
+                 )
+               (multiple-value-bind (form empty)
+                   (load-svc-user-repo-list "github" user-name)
+                 (cond
+                   ((or form (and (not form) (not empty)))
+                    (setf repos form))
+                   ((and (not form) (not empty))
+                    (setf repos (cache-svc-user-repo-list "github" user-name))
+                    )
+                   )
+                 )
+               (do-group (r repos)
+                 (puts "~a" r)
+                 )
+               )
+             )
+        )
     (def-cli-verb "github-user-clone"
       :args ("user-name")
+      :params ("repos")
       :body (
+             (if (not (listp repos))
+                 (setf repos (list repos))
+                 )
+             (if (and repos)
+                 (setf repos (mapcar #'(lambda (r)
+                                         (str-cat user-name "/" r))
+                                     repos))
+                 )
              (cond
                ((and user-name)
                 (cache-svc-user-repo-list "github" user-name)
-                (github-clone-user-all-bg user-name)
-                ))
+                (github-clone-user-all-bg user-name repos)
+                )
+               )
              )
       )
     (def-cli-verb "github-user-pull"
       :args ("user-name")
+      :params ("repos")
       :body (
+             (if (not (listp repos))
+                 (setf repos (list repos))
+                 )
+             (if (and repos)
+                 (setf repos (mapcar #'(lambda (r)
+                                         (str-cat user-name "/" r))
+                                     repos))
+                 )
              (cond
                ((and user-name)
                 (cache-svc-user-repo-list "github" user-name)
-                (github-pull-user-all-bg user-name)
+                (github-pull-user-all-bg user-name repos)
                 ))
              )
       )
     (def-cli-verb "github-blacklist"
       :args ("repo-name")
       :params ("user")
+      :body (
+             )
+      )
+    (def-cli-verb "git-clone"
+      :args ("repo-path" "destination-path")
+      :body (
+             )
+      )
+    (def-cli-verb "git-pull"
+      :args ("repo-path")
       :body (
              )
       )
@@ -1251,6 +1319,7 @@
       )
     (def-cli-verb-env "js-env")
     (def-cli-verb-env "c-env")
+    (def-cli-verb-env "pp-c-env")
     (def-cli-verb "env-show"
       :args ("name")
       :body ((let* ((envs (file-to-forms blip-env-cfg))
@@ -1711,10 +1780,37 @@
   (not (stack-list blip-vdefun-log))
   )
 
+
+(vdefun github-user-repos-url (user)
+  "Creates github URL that we can use to access a user's repos"
+  (str-cat github-api-url "users/" user "/repos"))
+
+(vdefun repo-spec-to-github-url (spec)
+  (str-cat github-base-url spec ".git"))
+
+(vdefun repo-specs-to-github-urls (specs)
+  (map 'list #'repo-spec-to-github-url specs))
+
+(vdefun repo-spec-to-gerrit-url (spec)
+  (str-cat gerrit-base-url spec ".git"))
+
+(vdefun repo-specs-to-gerrit-urls (specs)
+  (map 'list #'repo-spec-to-gerrit-url specs))
+
+
 (defun create-list-bindings (names-arr list)
   (let ((ret '()))
     (dotimes (i (length names-arr))
       (pushr! ret (list (elem names-arr i) `(car (nthcdr (+ ,i) ,list))))
+      )
+    ret
+    )
+  )
+
+(defun create-arr-bindings (names-arr off arr)
+  (let ((ret '()))
+    (dotimes (i (length names-arr))
+      (pushr! ret (list (elem names-arr i) `(elem ,arr (+ ,off ,i))))
       )
     ret
     )
@@ -1809,6 +1905,24 @@
     `(progn
        (do-cons (,e ,g)
          (let (,@(create-list-bindings `,es `,e))
+           ,@body
+           )
+         )
+       )
+    )
+  )
+
+(defmacro! do-array (args &body body)
+  "Just like do-group, except it works on arrays"
+  (assert (>= (length args) 2))
+  (let* ((off (gensym))
+         (es (coerce (popr args) 'vector))
+         (g (car (last args)))
+         (i (gensym)))
+    (assert (symbolp off))
+    `(progn
+       (dotimes (,off (length ,g))
+         (let (,@(create-arr-bindings `,es `,off `,g))
            ,@body
            )
          )
@@ -3148,17 +3262,34 @@
      (list (car fd) (cadr fd) (funcall cb (caddr fd)) (cadddr fd) (car (cddddr fd))))))
 
 
-(defun xform-js-fdef-cgroup-aux (acc head tail cb)
+(defun xform-js-fdef-cgroup-aux (stack head tail cb)
   (cond
     ((not head)
-     acc)
+     (stack-list stack))
     ((is-curly-group head)
+     (stack-pushr stack (funcall cb head))
      (xform-js-fdef-cgroup-aux
-      (pushr acc (funcall cb head)) (car tail) (cdr tail) cb))
+      stack (car tail) (cdr tail) cb))
     ((not (is-curly-group head))
+     (stack-pushr stack head)
      (xform-js-fdef-cgroup-aux
-      (pushr acc head) (car tail) (cdr tail) cb))
+      stack (car tail) (cdr tail) cb))
     ))
+
+(defun xform-js-fdef-cgroup-aux2 (stack fdef cb)
+  (declare (optimize (speed 3) (safety 0)))
+  (do-group (e fdef)
+    (cond
+      ((is-curly-group e)
+       (stack-pushr stack (funcall cb e))
+       )
+      ((and t)
+       (stack-pushr stack e)
+       )
+      )
+    )
+  (return-from xform-js-fdef-cgroup-aux2 (stack-list stack))
+  )
 
 (defun xform-js-vbind-rval-aux (acc head tail cb)
   (cond
@@ -3221,9 +3352,11 @@
     ))
 
 (defun xform-js-fdef-cgroup (fd cb)
-  (xform-js-fdef-cgroup-aux '() (car fd) (cdr fd) cb))
+  ;(xform-js-fdef-cgroup-aux (make-instance 'stack) (car fd) (cdr fd) cb)
+  (xform-js-fdef-cgroup-aux2 (make-instance 'stack) fd cb)
+  )
 
-(defun xform-c-fdef-cgroup (fd cb)
+(vdefun xform-c-fdef-cgroup (fd cb)
   (xform-js-fdef-cgroup fd cb)
   )
 
@@ -3290,27 +3423,27 @@
   If rmatch succeeds, this function returns t, otherwise nil"
   (assert (not (and opt-rmatch opt-ematch)))
   (let ((curls ls)
-        (total_size 0)
-        (current_rsize 0)
-        (current_esize 0)
+        (total-size 0)
+        (current-rsize 0)
+        (current-esize 0)
         (rmatched 0))
     (tagbody again
-       (setf current_rsize (finite-match curls rmatch-fns))
+       (setf current-rsize (finite-match curls rmatch-fns))
        (cond
-         ((and current_rsize)
-          (incf total_size current_rsize)
-          (setf curls (nthcdr current_rsize curls))
+         ((and current-rsize)
+          (incf total-size current-rsize)
+          (setf curls (nthcdr current-rsize curls))
           (incf rmatched)
           (go again))
-         ((not current_rsize)
-          (setf current_esize (finite-match curls ematch-fns))
-          (if (or (and (not current_esize) (not opt-ematch))
+         ((not current-rsize)
+          (setf current-esize (finite-match curls ematch-fns))
+          (if (or (and (not current-esize) (not opt-ematch))
                   (and (= rmatched 0) (not opt-rmatch)))
-              (setf total_size nil)
-              (incf total_size current_esize)
+              (setf total-size nil)
+              (incf total-size (if current-esize current-esize 0))
               )))
        )
-    total_size
+    total-size
     )
   )
 
@@ -3353,24 +3486,32 @@
 
 (defmacro! group-and-continue (parent grpr grp-sz)
   `(let* ((agg (,grpr head tail ,grp-sz))
-          (nacc (pushr acc (car agg)))
+          ;(nacc (pushr acc (car agg)))
           (nhead (cadr agg))
           (ntail (caddr agg)))
-     (,parent nacc nhead ntail)))
+     (stack-pushr stack (car agg))
+     (,parent stack nhead ntail)))
 
 (defmacro! xform-and-continue (parent xformer cb)
-  `(let* ((nacc (pushr acc (,xformer head #',cb))))
-    (,parent nacc (car tail) (cdr tail))))
+  `(let* (
+          ;(nacc (pushr acc (,xformer head #',cb)))
+          )
+     (stack-pushr stack (,xformer head #',cb))
+    (,parent stack (car tail) (cdr tail))))
 
 (defmacro! descend-and-continue (grand-parent parent)
-  `(let ((nacc (pushr acc (,grand-parent head))))
-    (,parent nacc (car tail) (cdr tail))))
+  `(let (
+          ;(nacc (pushr acc (,grand-parent head)))
+         )
+
+     (stack-pushr stack (,grand-parent head))
+    (,parent stack (car tail) (cdr tail))))
 
 (defmacro! c-stage-impl (self-parent self matcher grouper &key fcall fdef
                                      curly-ctl do-while
                                      flat-ctl arr nestable var-bind mbr-chain)
   `(progn
-     (defun ,self (acc head tail)
+     (defun ,self (stack head tail)
        (let ((sz (,matcher head tail)))
          (try-each
            ((and sz)
@@ -3388,18 +3529,20 @@
            ((is-nestable head)
             ,nestable)
            ((or (and (characterp head) tail) tail)
-            (,self (pushr acc head) (car tail) (cdr tail)))
+            (stack-pushr stack head)
+            (,self stack (car tail) (cdr tail)))
            ((and head (not tail))
-            (pushr acc head))
+            (stack-pushr stack head)
+            (stack-list stack))
            ((and (not tail))
-            acc)
+            (stack-list stack))
            ((and t)
             nil)
            )
          )
        )
      (vdefun ,self-parent (ls)
-       (,self '() (car ls) (cdr ls))
+       (,self (make-instance 'stack) (car ls) (cdr ls))
        )
      )
   )
@@ -3411,7 +3554,7 @@
                                          arr nestable var-bind obj-lit-rec
                                          mbr-chain)
   `(progn
-     (defun ,self (acc head tail)
+     (defun ,self (stack head tail)
        ;(declare (optimize (speed 3) (safety 0)))
        (let ((sz (,matcher head tail)))
          (try-each
@@ -3440,18 +3583,20 @@
            ((is-nestable head)
             ,nestable)
            ((or (and (characterp head) tail) tail)
-            (,self (pushr acc head) (car tail) (cdr tail)))
+            (stack-pushr stack head)
+            (,self stack (car tail) (cdr tail)))
            ((and head (not tail))
-            (pushr acc head))
+            (stack-pushr stack head)
+            (stack-list stack))
            ((and (not tail))
-            acc)
+            (stack-list stack))
            ((and t)
             nil)
            )
          )
        )
      (vdefun ,self-parent (ls)
-       (,self '() (car ls) (cdr ls))
+       (,self (make-instance 'stack) (car ls) (cdr ls))
        )
      )
   )
@@ -3709,6 +3854,7 @@
     ret
     )
   )
+
 
 (defstage "js" "fdef"
   :when ((:nestable descend))
@@ -4114,6 +4260,16 @@
   (if (and (listp ls) (cdr ls))
       (walk-tree (cdr ls) test work path
                  (cons 'r walk) :backoff-if backoff-if)))
+
+(defun walk-tree-off (ls test work path walk offset)
+  (if (and (listp ls) (funcall test (car ls)))
+      (funcall work (car ls) path (reverse (cons 'd walk)) offset))
+  (if (and (listp ls) (car ls))
+      (walk-tree-off (car ls) test work (pushr path (car ls))
+                 (cons 'd walk) offset))
+  (if (and (listp ls) (cdr ls))
+      (walk-tree-off (cdr ls) test work path
+                 (cons 'r walk) (+ (length (flatten (car ls))) offset))))
 
 (defmacro walk-tree2 (ls node-name stack-name walk-name &body body)
   (let ((ls-name (gensym))
@@ -4809,11 +4965,37 @@
           )
   )
 
+(defmacro! ix-dir (name suffix)
+  `(defmethod ,name ((ix indexer) repo file commit)
+     (let* ((fcommit (git-file-latest-commit-until repo file commit (commit-cmp ix)))
+            (outdir (str-cat blip-repo-meta repo "/root/" file "/" fcommit "/" ,suffix "/"))
+            )
+       outdir
+       )
+     )
+  )
+
+(ix-dir index-dir "path-index")
+
+
+(defmacro! index-x-file (name file-name &key suffix)
+  `(defmethod ,name ((ix indexer) &key outdir repo file commit)
+     (assert (xor outdir (and repo file commit)))
+     (if (not outdir)
+         (setf outdir (index-dir ix repo file commit))
+         )
+     (str-cat outdir ,file-name "-" (symbol-to-string (get-env-var 'env-type)) ,suffix)
+     )
+   )
+
+(index-x-file index-walks-file (test-name-str ix) :suffix "-walks")
+(index-x-file index-paths-file (test-name-str ix) :suffix "-paths")
+
+
 (vdefmethod serialize-index ((ix indexer) repo file commit)
-  (let* ((fcommit (git-file-latest-commit-until repo file commit (commit-cmp ix)))
-         (outdir (str-cat blip-repo-meta repo "/root/" file "/" fcommit "/path-index/"))
-         (out1 (str-cat outdir (test-name-str ix) "_paths"))
-         (out2 (str-cat outdir (test-name-str ix) "_walks"))
+  (let* ((outdir (index-dir ix repo file commit))
+         (out1 (index-paths-file ix :outdir outdir))
+         (out2 (index-walks-file ix :outdir outdir))
          )
     (build-index ix)
     (idx-to-file (list (column 0 (str-stkls ix)) (ast-sha2 ix)) out1)
@@ -4861,31 +5043,16 @@
   (serialize-index ix repo file commit)
   )
 
-(vdefmethod load-index ((ix indexer) repo file commit &optional ast)
-  (let* ((fcommit (git-file-latest-commit-until repo file commit (commit-cmp ix)))
-         (in (str-cat blip-repo-meta repo "/root/" file "/" fcommit "/path-index/"
-                      (test-name-str ix)))
-         (ret (file-to-idx in)))
-    ret
-    )
-  )
 
 (vdefmethod load-index-paths ((ix indexer) repo file commit &optional ast)
-  (let* ((fcommit (git-file-latest-commit-until repo file commit (commit-cmp ix)))
-         (old-in (str-cat blip-repo-meta repo "/root/" file "/" fcommit "/path-index/"
-                          (test-name-str ix)))
-         (in (str-cat old-in "_paths"))
+  (let* ((in (index-paths-file ix :repo repo :file file :commit commit))
          (ret (file-to-idx in))
          )
-    (if (is-file-p old-in)
-        (delete-file old-in))
     ret
     ))
 
 (vdefmethod load-index-walks ((ix indexer) repo file commit &optional ast)
-  (let* ((fcommit (git-file-latest-commit-until repo file commit (commit-cmp ix)))
-         (in (str-cat blip-repo-meta repo "/root/" file "/" fcommit "/path-index/"
-                      (test-name-str ix) "_walks"))
+  (let* ((in (index-walks-file ix :repo repo :file file :commit commit))
          (ret (file-to-idx in)))
     ret
     ))
@@ -5049,12 +5216,14 @@
     )
   )
 
-(defmacro! load-list-nodes (name suf)
-  `(vdefun ,name (repo file commit &optional indexer)
+(defmacro! load-list-nodes (name ls-dir-fn)
+  `(vdefmethod ,name ((ix indexer) repo file commit)
      ;(assert commit-cmp)
-     (let* ((cmp (if indexer (commit-cmp indexer)))
-            (fcommit (git-file-latest-commit-until repo file commit cmp))
-            (in (str-cat blip-repo-meta repo "/root/" file "/" fcommit ,suf)))
+     (let* ((indir (,ls-dir-fn ix repo file commit))
+            (env-type (get-env-var 'env-type))
+            (env-type-str (symbol-to-string env-type))
+            (in (str-cat indir env-type-str)))
+       ;(puts "input: ~a" in)
        (bin-to-form in)
        )
      )
@@ -5071,19 +5240,28 @@
                       :agg (if (and count) 'frequency)
                       )))
 
+(defmacro! probe-code (arg &body body)
+  `(progn
+    (puts "probe: ~a" ,arg)
+    ,@body
+    )
+  )
 
-(defmacro! cache-x-list-node (name list-impl suf)
-  `(vdefun ,name (repo file commit &optional indexer)
-     (let* ((ast (load-ast repo file commit indexer))
-            (cmp (if indexer (commit-cmp indexer)))
-            (fcommit (git-file-latest-commit-until repo file commit cmp))
-            (outdir (str-cat blip-repo-meta repo "/root/" file "/" fcommit))
-            (out (str-cat outdir ,suf))
+(defmacro! cache-x-list-node (name list-impl ls-dir-fn)
+  `(vdefun ,name (repo file commit indexer)
+     (let* ((load-ast? (multiple-value-list (load-ast repo file commit indexer)))
+            (ast (car load-ast?))
+            (empty-file (cadr load-ast?))
+            (env-type (get-env-var 'env-type))
+            (env-type-str (symbol-to-string env-type))
+            (outdir (,ls-dir-fn indexer repo file commit))
+            (out (str-cat outdir env-type-str))
             )
+       ;(puts "repo: ~a file: ~a commit: ~a" repo file commit)
       ;(assert commit-cmp)
       ;TODO implement a cache-ast function that will cache ASTs on a per-file basis
       ;TODO cleanup parse-x-files-at-commit
-      (if (not ast)
+      (if (and (not ast) (not empty-file))
           (assert ast))
       (mkdir outdir)
       (form-to-bin (,list-impl ast t) out)
@@ -5097,13 +5275,14 @@
      (expand-commit! repo commit)
      ;(assert commit-cmp)
      (multiple-value-bind
-           (ls empty) (if (not force) (,loader repo file commit indexer)
+           (ls empty) (if (not force)
+                          (,loader indexer repo file commit)
                           (values nil nil))
 
        (cond
          ((and (not ls) (not empty))
           (,cacher repo file commit indexer)
-          (setf ls (,loader repo file commit indexer)))
+          (setf ls (,loader indexer repo file commit)))
          )
        (cond
          ((not count)
@@ -5113,31 +5292,35 @@
        )
      ))
 
-(load-list-nodes load-list-words "/ls-words")
-(load-list-nodes load-list-fcalls "/ls-fcalls")
-(load-list-nodes load-list-fdefs "/ls-fdefs")
-(load-list-nodes load-list-fbinds "/ls-fbinds")
+(ix-dir ls-words-dir "ls-words")
+(ix-dir ls-fdefs-dir "ls-fdefs")
+(ix-dir ls-fcalls-dir "ls-fcalls")
+(ix-dir ls-fbinds-dir "ls-fbinds")
+(load-list-nodes load-list-words ls-words-dir)
+(load-list-nodes load-list-fcalls ls-fcalls-dir)
+(load-list-nodes load-list-fdefs ls-fdefs-dir)
+(load-list-nodes load-list-fbinds ls-fbinds-dir)
 
 (x-list-node-impl js-list-fcalls-impl is-js-fcall get-fcall-name)
-(cache-x-list-node cache-js-list-fcalls js-list-fcalls-impl "/ls-fcalls")
+(cache-x-list-node cache-js-list-fcalls js-list-fcalls-impl ls-fcalls-dir)
 
 (x-list-node-impl js-list-fdefs-impl is-js-fdef get-js-fdef-name)
-(cache-x-list-node cache-js-list-fdefs js-list-fdefs-impl "/ls-fdefs")
+(cache-x-list-node cache-js-list-fdefs js-list-fdefs-impl ls-fdefs-dir)
 
 (x-list-node-impl js-list-fbinds-impl is-js-fdef-binding get-js-fbind-name)
-(cache-x-list-node cache-js-list-fbinds js-list-fbinds-impl "/ls-fbinds")
+(cache-x-list-node cache-js-list-fbinds js-list-fbinds-impl ls-fbinds-dir)
 
 (x-list-node-impl js-list-words-impl is-word-group identity)
-(cache-x-list-node cache-js-list-words js-list-words-impl "/ls-words")
+(cache-x-list-node cache-js-list-words js-list-words-impl ls-words-dir)
 
 (x-list-node-impl c-list-fcalls-impl is-c-fcall get-fcall-name)
-(cache-x-list-node cache-c-list-fcalls c-list-fcalls-impl "/ls-fcalls")
+(cache-x-list-node cache-c-list-fcalls c-list-fcalls-impl ls-fcalls-dir)
 
 (x-list-node-impl c-list-fdefs-impl is-c-fdef get-c-fdef-name)
-(cache-x-list-node cache-c-list-fdefs c-list-fdefs-impl "/ls-fdefs")
+(cache-x-list-node cache-c-list-fdefs c-list-fdefs-impl ls-fdefs-dir)
 
 (x-list-node-impl c-list-words-impl is-word-group identity)
-(cache-x-list-node cache-c-list-words c-list-words-impl "/ls-words")
+(cache-x-list-node cache-c-list-words c-list-words-impl ls-words-dir)
 
 (x-list-node js-list-fcalls cache-js-list-fcalls load-list-fcalls)
 (x-list-node c-list-fcalls cache-c-list-fcalls load-list-fcalls)
@@ -6127,7 +6310,9 @@
 
                             #'(lambda (x y stack)
                                 (cond
-                                  ((and (is-js-hyperlink x) (not (match-str-list ";" y)))
+                                  ((and (is-js-hyperlink x) (and
+                                                             (not (match-str-list ";" y))
+                                                             (not (equal y #\)))))
                                    (let ((depth (count-if #'is-curly-group
                                                           stack)))
                                      (values x (gen-nl-ws (* depth 8)))
@@ -6333,8 +6518,9 @@
                             )
   )
 
-(defun c-joyent-style (ast)
+(defun c-joyent-style (ast &key unfold)
   (fmt-rules ast
+             :unfold unfold
              :fold (list
                     (list
                      #'(lambda (n stack)
@@ -6599,21 +6785,25 @@
   `(valve #'validate-blank (enclose (gen-ws 1))))
 
 (vdefun js-to-ast (input)
-  (pipeline+ input cmt-str-regex white-space
-            blanks words punctuations
-            nestables
-            js-fdefs
-            js-fcalls
-            js-arrs
-            js-var-bindings
-            js-mbr-chains
-            js-obj-lit-recs
-            js-vars
-            js-curly-ctl-stmts
-            js-do-while-stmts
-            js-flat-ctl-stmts
-            ;#'js-if-else-chains
-            ))
+  (pipeline+ input
+             cmt-str-regex
+             white-space
+             blanks
+             words
+             punctuations
+             nestables
+             js-fdefs
+             js-fcalls
+             js-arrs
+             js-var-bindings
+             js-mbr-chains
+             js-obj-lit-recs
+             js-vars
+             js-curly-ctl-stmts
+             js-do-while-stmts
+             js-flat-ctl-stmts
+             ;#'js-if-else-chains
+             ))
 
 
 (defun html-start-tag (tag)
@@ -6871,11 +7061,14 @@
  ;;;(c-pre-proc-aux '() (car ls) (cdr ls)
   )
 
-(vdefun c-to-ast (input)
-  (pipeline input #'cmt-str #'white-space
-            #'blanks #'words #'punctuations
-            #'nestables #'c-fdefs #'c-fcalls))
+(defmacro! c-to-ast-pipeline (input)
+  `(pipeline+ ,input cmt-str white-space
+              blanks words punctuations
+              nestables c-fdefs c-fcalls)
+  )
 
+(vdefun c-to-ast (input)
+  (c-to-ast-pipeline input))
 
 (defun test-ast ()
   (js-to-ast
@@ -7015,7 +7208,7 @@
       ((and t)
        'semver))))
 
-(defun git-commit-split (pkg)
+(vdefun git-commit-split (pkg)
   (str-split "\\+|#" (cadr pkg)))
 
 (defun get-repo-url-from-pkg-ver (pkg)
@@ -7053,7 +7246,8 @@
 
 (defun npm-get-pkg (pkg version)
   (pushnew '("application" . "json") drakma:*text-content-types*)
-  (drakma:http-request (npm-pkg-url pkg version) :method :get))
+  (drakma:http-request (npm-pkg-url pkg version) :method :get
+                       :user-agent blip-user-agent))
 
 (defun npm-parse-ver-str (v)
   (pipeline v #'white-space #'blanks #'words #'punctuation))
@@ -7085,7 +7279,8 @@
     (pushnew '("application" . "json") drakma:*text-content-types*)
         (drakma:http-request url :method :get :parameters
                              (pairlis '("page" "per_page")
-                                   (list pg "100")))))
+                                      (list pg "100"))
+                             :user-agent blip-user-agent)))
 
 (defun user-repos-json (user page)
   (json-to-ast (str-to-char-ls (list-user-repos-http user page))))
@@ -7116,7 +7311,7 @@
       (cl-async:exit-event-loop)))
 
 
-(defun git-cmd (cmd dir &optional remote)
+(vdefun git-cmd (cmd dir &optional remote)
   (pushdir dir)
   (cl-async:spawn "git" (if (and remote) (list cmd remote) (list cmd))
                    :exit-cb #'update-git-cmd-status)
@@ -7124,11 +7319,11 @@
   (popdir)
   )
 
-(defun git-cmd-svc-user (cmd svc user &optional remote)
+(vdefun git-cmd-svc-user (cmd svc user &optional remote)
   (git-cmd cmd (str-cat blip-repos svc "/" user "/") remote))
 
 
-(defun github-pull-joyent (user-repo)
+(vdefun github-pull-joyent (user-repo)
   )
 
 (defun localhost-clone (path)
@@ -7136,24 +7331,28 @@
              (str-cat blip-repos "localhost/"
                            (car (last (str-split "/" path)))));)
 
-(defun github-clone-user-all (user)
+(defun github-clone-user-all (user repos)
   (map 'list #'(lambda (remote)
                  (git-cmd-svc-user "clone" "github" user remote))
-       (repo-specs-to-github-urls (load-svc-user-repo-list "github" user))))
+       (repo-specs-to-github-urls (if (not repos)
+                                      (load-svc-user-repo-list "github" user)
+                                      repos))))
 
-(defun github-clone-user-all-bg (user)
-  (cl-async:start-event-loop #'(lambda () (github-clone-user-all user))))
+(vdefun github-clone-user-all-bg (user repos)
+  (cl-async:start-event-loop #'(lambda () (github-clone-user-all user repos))))
 
-(defun github-clone-joyent-all ()
+(vdefun github-clone-joyent-all ()
   (github-clone-user-all-bg "joyent"))
 
-(defun github-pull-user-all (user)
+(vdefun github-pull-user-all (user repos)
   (map 'list #'(lambda (user-repo) (git-cmd-svc-user "pull" "github" user-repo))
-        (load-svc-user-repo-list "github" user)))
+       (if (not repos)
+           (load-svc-user-repo-list "github" user)
+           repos)))
 
-(defun github-pull-user-all-bg (user)
+(vdefun github-pull-user-all-bg (user repos)
   (cl-async:start-event-loop
-   #'(lambda () (github-pull-user-all user))))
+   #'(lambda () (github-pull-user-all user repos))))
 
 (defun github-pull-joyent-all ()
   (github-pull-user-all-bg "joyent"))
@@ -7197,18 +7396,18 @@
 (defun gerrit-pull-joyent-all% ()
   (map 'list #'gerrit-pull-joyent (load-svc-user-repo-list "github" "joyent")))
 
-(defun gerrit-pull-joyent-all ()
+(vdefun gerrit-pull-joyent-all ()
   (cl-async:start-event-loop #'gerrit-pull-joyent-all%))
 
-(defun git-switch-branch (branch)
+(vdefun git-switch-branch (branch)
   (assert (and branch))
   (inferior-shell:run/ss (list "git" "checkout" branch)))
 
-(defun git-clone (path dest)
+(vdefun git-clone (path dest)
   (assert (and path dest))
   (inferior-shell:run/ss (list "git" "clone" path dest)))
 
-(defun git-log-repo (repo &optional branch)
+(vdefun git-log-repo (repo &optional branch)
   (let ((curbr (git-current-branch repo)))
     (pushdir (str-cat blip-repos repo "/"))
     (if (and branch)
@@ -7221,14 +7420,14 @@
     )
   )
 
-(defun git-ls-remote (repo)
+(vdefun git-ls-remote (repo)
   (pushdir (str-cat blip-repos repo "/"))
   (let ((remotes (inferior-shell:run/ss (list "git" "ls-remote" "origin"))))
     (popdir)
     remotes)
   )
 
-(defun git-ls-branches (repo)
+(vdefun git-ls-branches (repo)
   (pushdir (str-cat blip-repos repo "/"))
   (let ((branches (inferior-shell:run/ss (list "git" "branch"))))
     (popdir)
@@ -7240,7 +7439,7 @@
   ))
 
 
-(defun git-fetch-remote (repo targ)
+(vdefun git-fetch-remote (repo targ)
   (let ((branches (git-ls-branches repo))
         (branch (cadr (str-split ":" targ))))
     (if (not (member branch branches :test #'equal))
@@ -7250,11 +7449,11 @@
             (popdir)))
         )))
 
-(defun git-log-urepo (svc user repo)
+(vdefun git-log-urepo (svc user repo)
   (git-log-repo (str-cat svc "/" user "/" repo "/"))
   )
 
-(defun git-current-branch (repo)
+(vdefun git-current-branch (repo)
   (pushdir (str-cat blip-repos repo "/"))
   (let ((cb (inferior-shell:run/ss
              (list "git" "rev-parse" "--abbrev-ref" "HEAD"))))
@@ -7263,12 +7462,12 @@
     )
   )
 
-(defun git-branch-commit (commit)
+(vdefun git-branch-commit (commit)
   (assert (and commit))
   (inferior-shell:run/ss (list "git" "checkout" "-B" "blip_tmp_branch" commit))
   )
 
-(defun git-unbranch (curbr)
+(vdefun git-unbranch (curbr)
   (inferior-shell:run/ss (list "git" "checkout" curbr))
   (inferior-shell:run/ss (list "git" "branch" "-d" "blip_tmp_branch"))
   )
@@ -7372,7 +7571,7 @@
 (defun file-mods (ls)
   (file-mods-aux (make-instance 'stack) '(#\Newline) ls))
 
-(defun git-strip-commit-msgs (ast)
+(vdefun git-strip-commit-msgs (ast)
   (let ((acc nil))
     (walk-tree ast #'is-commit-or-file-mod
                #'(lambda (n s w)
@@ -7451,7 +7650,7 @@
   (stack-list stack)
   )
 
-(defun git-refs (ls)
+(vdefun git-refs (ls)
   (git-refs-aux (make-instance 'stack) (car ls) (cdr ls)))
 
 (defun is-git-ref (ls)
@@ -7817,7 +8016,7 @@
     (str-split "\\n" lc)
     ))
 
-(defun git-commit-info (repo commit)
+(vdefun git-commit-info (repo commit)
   (let ((ret nil))
     (pushdir (str-cat blip-repos repo "/"))
     (setf ret (inferior-shell:run/ss (list "git" "--no-pager" "show"
@@ -7828,7 +8027,7 @@
     )
   )
 
-(defun git-amend-log-misdeletion (repo file commit)
+(vdefun git-amend-log-misdeletion (repo file commit)
   (let* ((outdir (str-cat blip-repo-meta repo "/amends/"))
          (out (str-cat outdir commit))
          (append-to nil))
@@ -7863,44 +8062,59 @@
   )
 
 
-(vdefun parse-x-files-at-commit (repo commit &key force suf pref parser whitelist antipref)
+(vdefun cpp (path &key include-sys-dirs include-quote-dirs definitions
+                       undefinitions)
+  (inferior-shell:run/ss (list "cpp" path "-")
+                         :on-error #'(lambda (code)
+                                       (e-puts "CPP failed with code ~a" code)
+                                       (sb-ext:exit :code -1)
+                                       ))
+  )
+
+(vdefun parse-x-files-at-commit (repo commit &key force suf pref parser
+                                      whitelist antipref indexer pre-process
+                                      )
   (expand-commit! repo commit)
+  (init-ix-repo-commits indexer)
   (let ((files (files-present-at-commit repo commit))
+        (cmp (if indexer (commit-cmp indexer)))
         (curbr (git-current-branch repo)))
+    (assert indexer)
+    (assert cmp)
     (pushdir (str-cat blip-repos repo))
     (git-branch-commit commit)
-    (map 'nil #'(lambda (file)
-                 (if (and (if (and suf) (is-str-suffix suf file) t)
-                          (if (and pref) (is-str-prefix pref file) t)
-                          (if (and antipref) (not (is-str-prefix antipref file)) t)
-                          )
-                     (let* ((slot (str-cat blip-asts repo "/" file))
-                            (revid (git-file-latest-commit repo file t))
-                            (fullpath (str-cat slot "/" revid))
-                            (full-src-path (str-cat (cwd) "/" file)))
-                       ;(puts "revid: ~a" revid)
-                       ;(puts "full-src: ~a" full-src-path)
-                       ;(puts "full-path: ~a" fullpath)
-                       (assert revid)
-                       (cond
-                         ((and (is-file-p full-src-path)
-                               (or (and force (file-exists-p fullpath))
-                                   (not (file-exists-p fullpath))))
-                          (cond
-                            ((or (not whitelist)
-                                 (member file whitelist :test #'equal))
-                             (form-to-bin
-                              (funcall parser
-                                       (file-to-char-ls full-src-path))
-                              fullpath)
-                             (form-to-bin
-                              (sha256-file fullpath)
-                              (str-cat fullpath "_sha2")))))
-                         ((not (is-file-p full-src-path))
-                          (assert nil)
-                         ))
-                       )))
-             files)
+    (do-group (file files)
+      (if (and (if (and suf) (is-str-suffix suf file) t)
+               (if (and pref) (is-str-prefix pref file) t)
+               (if (and antipref) (not (is-str-prefix antipref file)) t)
+               )
+          (let* ((revid (git-file-latest-commit-until repo file commit cmp))
+                 (fullpath (ast-path repo file commit indexer))
+                 (full-src-path (str-cat (cwd) "/" file)))
+                ;(puts "revid: ~a" revid)
+                ;(puts "full-src: ~a" full-src-path)
+                ;(puts "full-path: ~a" fullpath)
+            (assert revid)
+            (cond
+              ((and (is-file-p full-src-path)
+                    (or (and force (file-exists-p fullpath))
+                        (not (file-exists-p fullpath))))
+               (cond
+                 ((or (not whitelist)
+                      (member file whitelist :test #'equal))
+                  (form-to-bin
+                   (funcall parser
+                            (if (and pre-process)
+                                (str-to-char-ls (funcall pre-process full-src-path))
+                                (file-to-char-ls full-src-path)))
+                   fullpath)
+                  (form-to-bin
+                   (sha256-file fullpath)
+                   (str-cat fullpath "-sha2")))))
+              ((not (is-file-p full-src-path))
+               (assert nil)
+               ))
+            )))
     (git-unbranch curbr)
     (popdir)
     ))
@@ -7929,17 +8143,21 @@
     )
   )
 
-(vdefun ast-path (repo file commit &optional indexer)
+(vdefun ast-path (repo file commit  &optional indexer)
   (expand-commit! repo commit)
   (let* ((cmp (if indexer (commit-cmp indexer)))
+         (env-type (get-env-var 'env-type))
+         (env-type-str (symbol-to-string env-type))
          (revid (git-file-latest-commit-until repo file commit cmp)))
-    (str-cat blip-asts repo "/" file "/" revid)))
+    (assert env-type)
+    (str-cat blip-asts repo "/" file "/" revid "/" env-type-str)))
+
 
 (vdefun ast-sha2-path (repo file commit &optional indexer)
   (expand-commit! repo commit)
   (let* ((cmp (if indexer (commit-cmp indexer)))
          (revid (git-file-latest-commit-until repo file commit cmp)))
-    (str-cat blip-asts repo "/" file "/" revid "_sha2")))
+    (str-cat blip-asts repo "/" file "/" revid "-sha2")))
 
 (vdefun load-ast (repo file commit &optional indexer)
   (bin-to-form (ast-path repo file commit indexer)))
@@ -7961,6 +8179,25 @@
                    )
                  )
              (list ast))
+  )
+
+
+(vdefun count-groups (chars ast)
+  (let ((groups 0))
+    (walk-tree ast
+               #'(lambda (x)
+                   (if (not chars)
+                       (listp x)
+                       (or (listp x) (characterp x))
+                       )
+                   )
+               #'(lambda (n p s)
+                   (incf groups)
+                   )
+               '()
+               '())
+    groups
+    )
   )
 
 (defun js-path-cat-aux (str ls files)
@@ -8254,4 +8491,114 @@
     (map 'list #'(lambda (r) (list file r)) (remove-if #'not exp-reqs))
   ))
 
+(defclass range ()
+  (
+   (start :initarg :start :initform 0 :accessor start)
+   (end :initarg :end :initform 0 :accessor end)
+   )
+  )
+
+(defclass range-tree ()
+  ((ranges :initarg :ranges
+           :initform (make-array '(4096) :element-type 'range
+                                         :adjustable t
+                                         :fill-pointer 0)
+           :accessor ranges)
+   (range-levels :initarg :range-levels
+                 :initform (make-array 1 :element-type 'vector
+                                         :adjustable t
+                                         :fill-pointer 0)
+                 :accessor range-levels)
+   (input :initarg :input :initform nil :accessor input)
+   (start :initarg :start :initform 0 :accessor start)
+   (end :initarg :end :initform 0 :accessor end)
+   )
+  )
+
+(defmethod push-range ((tree range-tree) range)
+  (vector-push-extend range (ranges tree))
+  (if (> (start tree) (start range))
+      (setf (start tree) (start range)))
+  (if (< (end tree) (end range))
+      (setf (end tree) (end range)))
+  )
+
+(defmethod walk-range-tree ((tree range-tree) work)
+  (let* ((ranges (ranges tree))
+         (length (length ranges))
+         (crng nil)
+         )
+    (funcall work (mk-range (start tree) (end tree)))
+    (do-array (crng ranges)
+      (funcall work crng)
+      )
+    )
+  )
+
+
+(defmethod print-range-tree ((tree range-tree))
+  (walk-range-tree tree #'(lambda (range)
+                            (puts "[~a ~a]" (start range) (end range))
+                            )
+                   )
+  )
+
+(defmacro! mk-range (start end)
+  `(make-instance 'range :start ,start :end ,end)
+  )
+
+(vdefun ast-to-range-tree (ast)
+  (let ((range-tree (make-instance 'range-tree))
+        (offset 0)
+        (expected (length (flatten ast)))
+        )
+    (walk-tree-off ast
+                   #'(lambda (x) (and x (listp x)))
+                   #'(lambda (n p w o)
+                       (assert (and n))
+                       (assert (<= o expected))
+                       (push-range range-tree
+                                   (mk-range
+                                    o
+                                    (+ o (- (length (flatten n)) 1))))
+                       )
+                   '() '() 0)
+    range-tree
+    )
+  )
+
+(defun test-walk-tree ()
+  (let ((tree '(((a b c d) (e f g h)) ((i j k l) (m n o p))))
+        )
+    (walk-tree-off tree #'identity
+                   #'(lambda (n p w o)
+                       (puts "n: ~a~%p: ~a~%o: ~a" n p o)
+                       )
+                   '() '() 0
+                   )
+    nil
+    )
+  )
+
+(defun test-off-tree ()
+  (let ((tree '(((a b c d) (e f g h)) ((i j k l) (m n o p))))
+        )
+    (print-range-tree (ast-to-range-tree tree))
+    nil
+    )
+  )
+
+(defun test-range-walk-perf ()
+  (load-top-env)
+  (let* ((file "lib/model/networks.js")
+         (l-ast (load-ast (get-env-var 'repo) file (get-env-var 'commit)))
+         (r-ast (ast-to-range-tree l-ast))
+         (count 0)
+         )
+    (time (walk-tree l-ast #'identity #'(lambda (n s w) (incf count)) '() '()))
+    (time (walk-range-tree r-ast #'(lambda (n) (incf count))))
+    )
+  )
+
 (load "envs.lisp")
+
